@@ -47,6 +47,7 @@ function applySnapshot(snapshot) {
   document.querySelector("#tracked").textContent = status.tracked || 0;
   document.querySelector("#highlighted").textContent = state.rows.filter((row) => row.isHighlighted).length;
   document.querySelector("#strongSignals").textContent = state.rows.filter((row) => row.isStrongSignal).length;
+  document.querySelector("#directionSignals").textContent = state.signals.length;
   document.querySelector("#staleRows").textContent = status.staleRows || 0;
   document.querySelector("#updatedAt").textContent = status.updatedAt || "-";
   const latestAlert = state.alerts[0];

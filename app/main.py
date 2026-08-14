@@ -344,8 +344,9 @@ class BinanceMonitor:
             and safe_num(volume_multiple) >= async_config.volume_multiple_threshold
         )
         is_strong_signal = highlighted and strength >= async_config.signal_strength_threshold
+        should_record_signal = direction != "观察" and not is_stale
         self._prune_triggers(state, now)
-        if is_strong_signal and now - state.last_signal_at >= 180:
+        if should_record_signal and now - state.last_signal_at >= 180:
             state.last_signal_at = now
             state.trigger_times.append(now)
 
@@ -370,11 +371,12 @@ class BinanceMonitor:
             "isHighlighted": highlighted,
             "isStrongSignal": is_strong_signal,
         }
-        if is_strong_signal and state.last_signal_at == now:
+        if should_record_signal and state.last_signal_at == now:
             event = {
                 "symbol": symbol,
                 "signalDirection": direction,
                 "signalStrength": strength,
+                "isStrongSignal": is_strong_signal,
                 "triggerCount1h": len(state.trigger_times),
                 "oiChange5m": oi_5m,
                 "priceChange5m": price_5m,
@@ -514,12 +516,13 @@ def signal_strength(
 
 
 def build_dingtalk_payload(event: dict[str, Any]) -> dict[str, Any]:
-    title = f"{DINGTALK_KEYWORD} {event['symbol']} 强信号"
+    title = f"{DINGTALK_KEYWORD} {event['symbol']} {event['signalDirection']}"
     text = "\n".join(
         [
             f"## {title}",
             f"- 方向：{event['signalDirection']}",
             f"- 强度：{event['signalStrength']}",
+            f"- 强信号：{'是' if event.get('isStrongSignal') else '否'}",
             f"- 1小时触发：{event['triggerCount1h']} 次",
             f"- 最新价：{format_price(event['latestPrice'])}",
             f"- 5m OI：{format_pct(event['oiChange5m'])}",
