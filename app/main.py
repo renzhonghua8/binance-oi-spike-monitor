@@ -41,7 +41,6 @@ class MonitorConfig(BaseModel):
 class SymbolState:
     oi_history: deque[tuple[float, float]] = field(default_factory=lambda: deque(maxlen=128))
     price_history: deque[tuple[float, float]] = field(default_factory=lambda: deque(maxlen=128))
-    quote_volume_history: deque[tuple[float, float]] = field(default_factory=lambda: deque(maxlen=128))
     trigger_times: deque[float] = field(default_factory=lambda: deque(maxlen=64))
     last_signal_at: float = 0
     last_oi_at: float = 0
@@ -195,8 +194,15 @@ class BinanceMonitor:
                 try:
                     state = self.states[symbol]
                     self._schedule_seed_if_needed(symbol, symbol_info, state)
-                    oi_payload = await get_json(client, "/fapi/v1/openInterest", {"symbol": symbol})
-                    return self._build_row(symbol_info, oi_payload, premium.get(symbol, {}))
+                    oi_payload, klines = await asyncio.gather(
+                        get_json(client, "/fapi/v1/openInterest", {"symbol": symbol}),
+                        get_json(
+                            client,
+                            "/fapi/v1/klines",
+                            {"symbol": symbol, "interval": "1m", "limit": 12},
+                        ),
+                    )
+                    return self._build_row(symbol_info, oi_payload, klines, premium.get(symbol, {}))
                 except Exception:
                     return None
 
@@ -246,47 +252,14 @@ class BinanceMonitor:
                     results = await asyncio.gather(kline_task, oi_hist_task, return_exceptions=True)
             klines = results[0] if not isinstance(results[0], Exception) else None
             oi_hist = results[1] if not isinstance(results[1], Exception) else None
-            self._apply_seed_payloads(symbol_info, state, (klines, oi_hist))
+            self._apply_seed_payloads(state, oi_hist)
         finally:
             state.seeding = False
 
-    def _apply_seed_payloads(
-        self,
-        symbol_info: dict[str, Any],
-        state: SymbolState,
-        seed_payloads: tuple[list[list[Any]] | None, list[dict[str, Any]] | None],
-    ) -> None:
-        klines, oi_hist = seed_payloads
-        if klines:
-            self._seed_price_and_volume_history(state, klines, symbol_info["quoteVolume"])
+    def _apply_seed_payloads(self, state: SymbolState, oi_hist: list[dict[str, Any]] | None) -> None:
         if oi_hist:
             self._seed_oi_history(state, oi_hist)
-        if klines or oi_hist:
             state.seeded = True
-
-    def _seed_price_and_volume_history(
-        self,
-        state: SymbolState,
-        klines: list[list[Any]],
-        current_quote_volume: float,
-    ) -> None:
-        now = time.time()
-        seeded_prices: list[tuple[float, float]] = []
-        seeded_quote_volumes: list[tuple[float, float]] = []
-        cumulative_quote_volume = current_quote_volume
-        closed_klines = list(klines)[-11:]
-        for index, kline in enumerate(reversed(closed_klines)):
-            open_time = float(kline[0]) / 1000
-            close_price = float(kline[4])
-            quote_volume = float(kline[7])
-            ts = min(open_time + 60, now - (index * 60))
-            seeded_prices.append((ts, close_price))
-            seeded_quote_volumes.append((ts, cumulative_quote_volume))
-            cumulative_quote_volume -= quote_volume
-        for item in reversed(seeded_prices):
-            append_unique_sample(state.price_history, item)
-        for item in reversed(seeded_quote_volumes):
-            append_unique_sample(state.quote_volume_history, item)
 
     def _seed_oi_history(self, state: SymbolState, oi_hist: list[dict[str, Any]]) -> None:
         for item in oi_hist:
@@ -339,6 +312,7 @@ class BinanceMonitor:
         self,
         symbol_info: dict[str, Any],
         oi_payload: dict[str, Any],
+        klines: list[list[Any]],
         premium: dict[str, Any],
     ) -> dict[str, Any]:
         symbol = symbol_info["symbol"]
@@ -348,14 +322,13 @@ class BinanceMonitor:
         state = self.states[symbol]
         state.oi_history.append((now, open_interest))
         state.price_history.append((now, latest_price))
-        state.quote_volume_history.append((now, symbol_info["quoteVolume"]))
         state.last_oi_at = now
 
         oi_1m = pct_change_from_history(state.oi_history, now, 60)
         oi_3m = pct_change_from_history(state.oi_history, now, 180)
         oi_5m = pct_change_from_history(state.oi_history, now, 300)
-        price_5m = pct_change_from_history(state.price_history, now, 300)
-        volume_multiple = volume_multiple_from_quote_history(state.quote_volume_history, now)
+        price_5m = price_change_from_klines(klines, latest_price, now)
+        volume_multiple = volume_multiple_from_klines(klines, now)
         funding_rate = float(premium.get("lastFundingRate") or 0) * 100
         data_age_seconds = int(now - state.last_oi_at)
 
@@ -472,29 +445,35 @@ def pct_change_from_history(history: deque[tuple[float, float]], now: float, sec
     return ((latest - baseline) / baseline) * 100
 
 
-def volume_multiple_from_quote_history(history: deque[tuple[float, float]], now: float) -> float | None:
-    latest = value_at_or_before(history, now)
-    five_min_ago = value_at_or_before(history, now - 300)
-    ten_min_ago = value_at_or_before(history, now - 600)
-    if latest is None or five_min_ago is None or ten_min_ago is None:
+def price_change_from_klines(
+    klines: list[list[Any]],
+    latest_price: float,
+    now: float,
+) -> float | None:
+    closed = closed_klines(klines, now)
+    if len(closed) < 5:
         return None
-    recent = latest - five_min_ago
-    previous = five_min_ago - ten_min_ago
-    if recent < 0 or previous <= 0:
+    baseline_open = float(closed[-5][1])
+    if baseline_open <= 0:
         return None
-    return recent / previous
+    return ((latest_price - baseline_open) / baseline_open) * 100
 
 
-def value_at_or_before(history: deque[tuple[float, float]], target: float) -> float | None:
-    value = None
-    for ts, item_value in history:
-        if ts <= target:
-            value = item_value
-        else:
-            break
-    if value is None and history:
-        return history[0][1]
-    return value
+def volume_multiple_from_klines(klines: list[list[Any]], now: float) -> float | None:
+    closed = closed_klines(klines, now)
+    if len(closed) < 10:
+        return None
+    volumes = [float(item[7]) for item in closed]
+    recent_5m = sum(volumes[-5:])
+    previous_5m = sum(volumes[-10:-5])
+    if previous_5m <= 0:
+        return None
+    return recent_5m / previous_5m
+
+
+def closed_klines(klines: list[list[Any]], now: float) -> list[list[Any]]:
+    now_ms = now * 1000
+    return [item for item in klines if float(item[6]) <= now_ms]
 
 
 def append_unique_sample(history: deque[tuple[float, float]], sample: tuple[float, float]) -> None:
