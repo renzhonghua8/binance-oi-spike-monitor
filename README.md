@@ -25,6 +25,35 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
+需要 Python 3.10 或更高版本。CentOS 默认 Python 版本较旧时，推荐使用 Docker 部署。
+
+## Docker 部署
+
+```bash
+git clone https://github.com/renzhonghua8/binance-oi-spike-monitor.git
+cd binance-oi-spike-monitor
+docker build -t binance-oi-spike-monitor .
+docker run -d \
+  --name binance-oi-spike-monitor \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  -e DINGTALK_WEBHOOK="https://oapi.dingtalk.com/robot/send?access_token=你的access_token" \
+  binance-oi-spike-monitor
+```
+
+查看日志：
+
+```bash
+docker logs -f binance-oi-spike-monitor
+```
+
+停止服务：
+
+```bash
+docker stop binance-oi-spike-monitor
+docker rm binance-oi-spike-monitor
+```
+
 也可以通过环境变量覆盖钉钉机器人地址：
 
 ```bash
