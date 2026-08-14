@@ -15,6 +15,7 @@ const fields = {
   strengthThreshold: document.querySelector("#strengthThreshold"),
   maxAge: document.querySelector("#maxAge"),
   seedTopSymbols: document.querySelector("#seedTopSymbols"),
+  klineTopSymbols: document.querySelector("#klineTopSymbols"),
   minVolume: document.querySelector("#minVolume"),
   refreshSeconds: document.querySelector("#refreshSeconds"),
 };
@@ -40,6 +41,7 @@ function applySnapshot(snapshot) {
   fields.strengthThreshold.value = config.signal_strength_threshold;
   fields.maxAge.value = config.max_data_age_seconds;
   fields.seedTopSymbols.value = config.seed_top_symbols;
+  fields.klineTopSymbols.value = config.kline_top_symbols;
   fields.minVolume.value = config.min_24h_quote_volume;
   fields.refreshSeconds.value = config.refresh_seconds;
   fields.topSymbols.disabled = fields.monitorAll.checked;
@@ -207,6 +209,7 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
     signal_strength_threshold: Number(fields.strengthThreshold.value),
     max_data_age_seconds: Number(fields.maxAge.value),
     seed_top_symbols: Number(fields.seedTopSymbols.value),
+    kline_top_symbols: Number(fields.klineTopSymbols.value),
     min_24h_quote_volume: Number(fields.minVolume.value),
     refresh_seconds: Number(fields.refreshSeconds.value),
   };

@@ -34,6 +34,7 @@ class MonitorConfig(BaseModel):
     signal_strength_threshold: int = Field(default=50, ge=0, le=100)
     max_data_age_seconds: int = Field(default=90, ge=30, le=300)
     seed_top_symbols: int = Field(default=160, ge=0, le=500)
+    kline_top_symbols: int = Field(default=120, ge=0, le=500)
     refresh_seconds: int = Field(default=45, ge=15, le=180)
 
 
@@ -64,6 +65,7 @@ class BinanceMonitor:
             "staleRows": 0,
         }
         self._seed_semaphore = asyncio.Semaphore(6)
+        self._backoff_until: float = 0
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
@@ -97,6 +99,18 @@ class BinanceMonitor:
 
     async def poll_once(self) -> None:
         try:
+            now = time.time()
+            if now < self._backoff_until:
+                wait_seconds = int(self._backoff_until - now)
+                async with self._lock:
+                    self.status = {
+                        "ok": False,
+                        "message": f"Binance限流退避中 {wait_seconds}s",
+                        "updatedAt": iso_now(),
+                        "tracked": len(self.rows),
+                        "staleRows": sum(1 for row in self.rows if row.get("isStale")),
+                    }
+                return
             timeout = httpx.Timeout(25.0, connect=8.0)
             limits = httpx.Limits(max_connections=24, max_keepalive_connections=12)
             async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
@@ -130,6 +144,17 @@ class BinanceMonitor:
                     "updatedAt": now_iso,
                     "tracked": len(symbols),
                     "staleRows": sum(1 for row in rows if row["isStale"]),
+                }
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {418, 429}:
+                self._backoff_until = time.time() + 300
+            async with self._lock:
+                self.status = {
+                    "ok": False,
+                    "message": f"Binance限流 {exc.response.status_code}: 退避5分钟",
+                    "updatedAt": iso_now(),
+                    "tracked": len(self.rows),
+                    "staleRows": sum(1 for row in self.rows if row.get("isStale")),
                 }
         except Exception as exc:
             async with self._lock:
@@ -194,14 +219,20 @@ class BinanceMonitor:
                 try:
                     state = self.states[symbol]
                     self._schedule_seed_if_needed(symbol, symbol_info, state)
-                    oi_payload, klines = await asyncio.gather(
-                        get_json(client, "/fapi/v1/openInterest", {"symbol": symbol}),
-                        get_json(
-                            client,
-                            "/fapi/v1/klines",
-                            {"symbol": symbol, "interval": "1m", "limit": 12},
-                        ),
-                    )
+                    async with self._lock:
+                        config = self.config
+                    if symbol_info.get("rank", 999999) <= config.kline_top_symbols:
+                        oi_payload, klines = await asyncio.gather(
+                            get_json(client, "/fapi/v1/openInterest", {"symbol": symbol}),
+                            get_json(
+                                client,
+                                "/fapi/v1/klines",
+                                {"symbol": symbol, "interval": "1m", "limit": 12},
+                            ),
+                        )
+                    else:
+                        oi_payload = await get_json(client, "/fapi/v1/openInterest", {"symbol": symbol})
+                        klines = None
                     return self._build_row(symbol_info, oi_payload, klines, premium.get(symbol, {}))
                 except Exception:
                     return None
@@ -312,7 +343,7 @@ class BinanceMonitor:
         self,
         symbol_info: dict[str, Any],
         oi_payload: dict[str, Any],
-        klines: list[list[Any]],
+        klines: list[list[Any]] | None,
         premium: dict[str, Any],
     ) -> dict[str, Any]:
         symbol = symbol_info["symbol"]
@@ -327,8 +358,8 @@ class BinanceMonitor:
         oi_1m = pct_change_from_history(state.oi_history, now, 60)
         oi_3m = pct_change_from_history(state.oi_history, now, 180)
         oi_5m = pct_change_from_history(state.oi_history, now, 300)
-        price_5m = price_change_from_klines(klines, latest_price, now)
-        volume_multiple = volume_multiple_from_klines(klines, now)
+        price_5m = price_change_from_klines(klines, latest_price, now) if klines else None
+        volume_multiple = volume_multiple_from_klines(klines, now) if klines else None
         funding_rate = float(premium.get("lastFundingRate") or 0) * 100
         data_age_seconds = int(now - state.last_oi_at)
 
