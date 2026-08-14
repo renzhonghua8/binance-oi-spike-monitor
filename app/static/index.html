@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Binance U本位合约 OI 异动监控</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>Binance U本位合约 OI 异动监控</h1>
+          <p>5 分钟内持仓量突增、价格与成交量共振扫描</p>
+        </div>
+        <div class="status" id="status">
+          <span class="dot"></span>
+          <span>连接中</span>
+        </div>
+      </header>
+
+      <section class="controls">
+        <label class="toggle">
+          <span>全部合约</span>
+          <input id="monitorAll" type="checkbox" />
+        </label>
+        <label>
+          <span>搜索</span>
+          <input id="search" type="search" placeholder="BTC / ETH / SOL" />
+        </label>
+        <label>
+          <span>监控数量 高流动性模式</span>
+          <input id="topSymbols" type="number" min="5" max="500" step="5" />
+        </label>
+        <label>
+          <span>OI 5m阈值 %</span>
+          <input id="oiThreshold" type="number" min="0" step="0.1" />
+        </label>
+        <label>
+          <span>成交量倍数</span>
+          <input id="volumeThreshold" type="number" min="0" step="0.1" />
+        </label>
+        <label>
+          <span>强信号分数</span>
+          <input id="strengthThreshold" type="number" min="0" max="100" step="1" />
+        </label>
+        <label>
+          <span>最大数据年龄 秒</span>
+          <input id="maxAge" type="number" min="30" max="300" step="5" />
+        </label>
+        <label>
+          <span>启动回填数量</span>
+          <input id="seedTopSymbols" type="number" min="0" max="500" step="10" />
+        </label>
+        <label>
+          <span>最低24h成交额 USDT</span>
+          <input id="minVolume" type="number" min="0" step="1000000" />
+        </label>
+        <label>
+          <span>刷新秒数</span>
+          <input id="refreshSeconds" type="number" min="15" max="180" step="1" />
+        </label>
+        <button id="saveConfig">保存</button>
+      </section>
+
+      <section class="summary">
+        <div>
+          <span>追踪合约</span>
+          <strong id="tracked">0</strong>
+        </div>
+        <div>
+          <span>突出信号</span>
+          <strong id="highlighted">0</strong>
+        </div>
+        <div>
+          <span>强信号</span>
+          <strong id="strongSignals">0</strong>
+        </div>
+        <div>
+          <span>过期数据</span>
+          <strong id="staleRows">0</strong>
+        </div>
+        <div>
+          <span>最后更新</span>
+          <strong id="updatedAt">-</strong>
+        </div>
+        <div>
+          <span>钉钉告警</span>
+          <strong id="alertStatus">-</strong>
+        </div>
+      </section>
+
+      <section class="history">
+        <div class="sectionHead">
+          <h2>强信号记录</h2>
+          <span>最近 500 条，默认 3 分钟内同一币种不重复记一条</span>
+        </div>
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>symbol</th>
+                <th>方向</th>
+                <th>强度</th>
+                <th>1h触发</th>
+                <th>5m OI%</th>
+                <th>5m价格%</th>
+                <th>5m量倍数</th>
+                <th>资金费率%</th>
+                <th>24h成交额</th>
+              </tr>
+            </thead>
+            <tbody id="signalRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="sectionHead mainListHead">
+        <h2>全市场异动榜</h2>
+        <span>启动时会自动回填 5m 历史样本，1m/3m OI 仍以实时采样为准</span>
+      </section>
+
+      <section class="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-sort="symbol">symbol</th>
+              <th data-sort="latestPrice">最新价</th>
+              <th data-sort="oiChange1m">1m OI%</th>
+              <th data-sort="oiChange3m">3m OI%</th>
+              <th data-sort="oiChange5m">5m OI%</th>
+              <th data-sort="priceChange5m">5m价格%</th>
+              <th data-sort="volumeMultiple5m">5m量倍数</th>
+              <th data-sort="fundingRate">资金费率%</th>
+              <th data-sort="quoteVolume24h">24h成交额</th>
+              <th data-sort="signalDirection">信号方向</th>
+              <th data-sort="signalStrength">强度</th>
+              <th data-sort="triggerCount1h">1h触发</th>
+              <th data-sort="lastSignalAt">最近信号</th>
+              <th data-sort="dataAgeSeconds">数据年龄</th>
+              <th data-sort="updatedAt">更新时间</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

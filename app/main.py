@@ -1,0 +1,655 @@
+import asyncio
+import json
+import math
+import os
+import time
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import httpx
+from fastapi import FastAPI
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+
+BINANCE_FAPI = "https://fapi.binance.com"
+DINGTALK_WEBHOOK = os.getenv(
+    "DINGTALK_WEBHOOK",
+    "",
+)
+DINGTALK_KEYWORD = "异动"
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+
+
+class MonitorConfig(BaseModel):
+    monitor_all: bool = True
+    top_symbols: int = Field(default=120, ge=5, le=500)
+    min_24h_quote_volume: float = Field(default=0, ge=0)
+    oi_5m_threshold: float = Field(default=3.0, ge=0)
+    volume_multiple_threshold: float = Field(default=1.5, ge=0)
+    signal_strength_threshold: int = Field(default=50, ge=0, le=100)
+    max_data_age_seconds: int = Field(default=90, ge=30, le=300)
+    seed_top_symbols: int = Field(default=160, ge=0, le=500)
+    refresh_seconds: int = Field(default=45, ge=15, le=180)
+
+
+@dataclass
+class SymbolState:
+    oi_history: deque[tuple[float, float]] = field(default_factory=lambda: deque(maxlen=128))
+    price_history: deque[tuple[float, float]] = field(default_factory=lambda: deque(maxlen=128))
+    quote_volume_history: deque[tuple[float, float]] = field(default_factory=lambda: deque(maxlen=128))
+    trigger_times: deque[float] = field(default_factory=lambda: deque(maxlen=64))
+    last_signal_at: float = 0
+    last_oi_at: float = 0
+    seeded: bool = False
+    seeding: bool = False
+    row: dict[str, Any] = field(default_factory=dict)
+
+
+class BinanceMonitor:
+    def __init__(self) -> None:
+        self.config = MonitorConfig()
+        self.states: dict[str, SymbolState] = defaultdict(SymbolState)
+        self.rows: list[dict[str, Any]] = []
+        self.signal_events: deque[dict[str, Any]] = deque(maxlen=500)
+        self.alert_events: deque[dict[str, Any]] = deque(maxlen=200)
+        self.status: dict[str, Any] = {
+            "ok": False,
+            "message": "warming up",
+            "updatedAt": None,
+            "tracked": 0,
+            "staleRows": 0,
+        }
+        self._seed_semaphore = asyncio.Semaphore(6)
+        self._task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
+
+    async def start(self) -> None:
+        if self._task is None:
+            self._task = asyncio.create_task(self._run_loop())
+
+    async def update_config(self, config: MonitorConfig) -> None:
+        async with self._lock:
+            self.config = config
+        await self.poll_once()
+
+    async def snapshot(self) -> dict[str, Any]:
+        async with self._lock:
+            return {
+                "config": self.config.model_dump(),
+                "status": self.status,
+                "rows": self.rows,
+                "signals": list(self.signal_events),
+                "alerts": list(self.alert_events),
+            }
+
+    async def _run_loop(self) -> None:
+        while True:
+            started = time.time()
+            await self.poll_once()
+            async with self._lock:
+                wait_for = self.config.refresh_seconds
+            elapsed = time.time() - started
+            await asyncio.sleep(max(1, wait_for - elapsed))
+
+    async def poll_once(self) -> None:
+        try:
+            timeout = httpx.Timeout(25.0, connect=8.0)
+            limits = httpx.Limits(max_connections=24, max_keepalive_connections=12)
+            async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
+                symbols = await self._select_symbols(client)
+                async with self._lock:
+                    self.status = {
+                        "ok": False,
+                        "message": f"scanning 0/{len(symbols)}",
+                        "updatedAt": iso_now(),
+                        "tracked": len(symbols),
+                        "staleRows": sum(1 for row in self.rows if row.get("isStale")),
+                    }
+                premium = await self._get_premium_index(client)
+                rows = await self._collect_rows(client, symbols, premium)
+
+            now_iso = iso_now()
+            async with self._lock:
+                self.rows = sorted(
+                    rows,
+                    key=lambda row: (
+                        not row["isStrongSignal"],
+                        -row["triggerCount1h"],
+                        not row["isHighlighted"],
+                        -row["signalStrength"],
+                        -safe_num(row["oiChange5m"]),
+                    ),
+                )
+                self.status = {
+                    "ok": True,
+                    "message": "live",
+                    "updatedAt": now_iso,
+                    "tracked": len(symbols),
+                    "staleRows": sum(1 for row in rows if row["isStale"]),
+                }
+        except Exception as exc:
+            async with self._lock:
+                self.status = {
+                    "ok": False,
+                    "message": f"{type(exc).__name__}: {exc}",
+                    "updatedAt": iso_now(),
+                    "tracked": len(self.rows),
+                    "staleRows": sum(1 for row in self.rows if row.get("isStale")),
+                }
+
+    async def _select_symbols(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+        exchange_info, tickers = await asyncio.gather(
+            get_json(client, "/fapi/v1/exchangeInfo"),
+            get_json(client, "/fapi/v1/ticker/24hr"),
+        )
+        allowed = {
+            item["symbol"]
+            for item in exchange_info.get("symbols", [])
+            if item.get("contractType") == "PERPETUAL"
+            and item.get("quoteAsset") == "USDT"
+            and item.get("status") == "TRADING"
+        }
+        async with self._lock:
+            config = self.config
+        candidates = []
+        for ticker in tickers:
+            symbol = ticker.get("symbol")
+            quote_volume = float(ticker.get("quoteVolume") or 0)
+            if symbol in allowed and quote_volume >= config.min_24h_quote_volume:
+                candidates.append(
+                    {
+                        "symbol": symbol,
+                        "lastPrice": float(ticker.get("lastPrice") or 0),
+                        "quoteVolume": quote_volume,
+                        "priceChangePercent": float(ticker.get("priceChangePercent") or 0),
+                    }
+                )
+        candidates.sort(key=lambda item: item["quoteVolume"], reverse=True)
+        for index, item in enumerate(candidates, start=1):
+            item["rank"] = index
+        if config.monitor_all:
+            return candidates
+        return candidates[: config.top_symbols]
+
+    async def _get_premium_index(self, client: httpx.AsyncClient) -> dict[str, dict[str, Any]]:
+        payload = await get_json(client, "/fapi/v1/premiumIndex")
+        return {item["symbol"]: item for item in payload if "symbol" in item}
+
+    async def _collect_rows(
+        self,
+        client: httpx.AsyncClient,
+        symbols: list[dict[str, Any]],
+        premium: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        semaphore = asyncio.Semaphore(24)
+        collected: list[dict[str, Any]] = []
+
+        async def collect(symbol_info: dict[str, Any]) -> dict[str, Any] | None:
+            async with semaphore:
+                symbol = symbol_info["symbol"]
+                try:
+                    state = self.states[symbol]
+                    self._schedule_seed_if_needed(symbol, symbol_info, state)
+                    oi_payload = await get_json(client, "/fapi/v1/openInterest", {"symbol": symbol})
+                    return self._build_row(symbol_info, oi_payload, premium.get(symbol, {}))
+                except Exception:
+                    return None
+
+        tasks = [asyncio.create_task(collect(item)) for item in symbols]
+        for index, task in enumerate(asyncio.as_completed(tasks), start=1):
+            row = await task
+            if row is not None:
+                collected.append(row)
+            if index % 25 == 0 or index == len(tasks):
+                await self._publish_partial_rows(collected, index, len(tasks))
+        return collected
+
+    def _schedule_seed_if_needed(
+        self,
+        symbol: str,
+        symbol_info: dict[str, Any],
+        state: SymbolState,
+    ) -> None:
+        if state.seeded or state.seeding:
+            return
+        config = self.config
+        if symbol_info.get("rank", 999999) > config.seed_top_symbols:
+            return
+        state.seeding = True
+        asyncio.create_task(self._seed_symbol_history(symbol, symbol_info, state))
+
+    async def _seed_symbol_history(
+        self,
+        symbol: str,
+        symbol_info: dict[str, Any],
+        state: SymbolState,
+    ) -> None:
+        try:
+            async with self._seed_semaphore:
+                timeout = httpx.Timeout(20.0, connect=8.0)
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    kline_task = get_json(
+                        client,
+                        "/fapi/v1/klines",
+                        {"symbol": symbol, "interval": "1m", "limit": 12},
+                    )
+                    oi_hist_task = get_json(
+                        client,
+                        "/futures/data/openInterestHist",
+                        {"symbol": symbol, "period": "5m", "limit": 3},
+                    )
+                    results = await asyncio.gather(kline_task, oi_hist_task, return_exceptions=True)
+            klines = results[0] if not isinstance(results[0], Exception) else None
+            oi_hist = results[1] if not isinstance(results[1], Exception) else None
+            self._apply_seed_payloads(symbol_info, state, (klines, oi_hist))
+        finally:
+            state.seeding = False
+
+    def _apply_seed_payloads(
+        self,
+        symbol_info: dict[str, Any],
+        state: SymbolState,
+        seed_payloads: tuple[list[list[Any]] | None, list[dict[str, Any]] | None],
+    ) -> None:
+        klines, oi_hist = seed_payloads
+        if klines:
+            self._seed_price_and_volume_history(state, klines, symbol_info["quoteVolume"])
+        if oi_hist:
+            self._seed_oi_history(state, oi_hist)
+        if klines or oi_hist:
+            state.seeded = True
+
+    def _seed_price_and_volume_history(
+        self,
+        state: SymbolState,
+        klines: list[list[Any]],
+        current_quote_volume: float,
+    ) -> None:
+        now = time.time()
+        seeded_prices: list[tuple[float, float]] = []
+        seeded_quote_volumes: list[tuple[float, float]] = []
+        cumulative_quote_volume = current_quote_volume
+        closed_klines = list(klines)[-11:]
+        for index, kline in enumerate(reversed(closed_klines)):
+            open_time = float(kline[0]) / 1000
+            close_price = float(kline[4])
+            quote_volume = float(kline[7])
+            ts = min(open_time + 60, now - (index * 60))
+            seeded_prices.append((ts, close_price))
+            seeded_quote_volumes.append((ts, cumulative_quote_volume))
+            cumulative_quote_volume -= quote_volume
+        for item in reversed(seeded_prices):
+            append_unique_sample(state.price_history, item)
+        for item in reversed(seeded_quote_volumes):
+            append_unique_sample(state.quote_volume_history, item)
+
+    def _seed_oi_history(self, state: SymbolState, oi_hist: list[dict[str, Any]]) -> None:
+        for item in oi_hist:
+            timestamp = float(item.get("timestamp") or 0) / 1000
+            value = item.get("sumOpenInterest")
+            if timestamp and value is not None:
+                append_unique_sample(state.oi_history, (timestamp, float(value)))
+
+    async def _publish_partial_rows(self, rows: list[dict[str, Any]], scanned: int, total: int) -> None:
+        seen_symbols = {row["symbol"] for row in rows}
+        merged_rows = rows + [
+            self._row_with_current_age(symbol, state)
+            for symbol, state in self.states.items()
+            if state.row and symbol not in seen_symbols
+        ]
+        sorted_rows = sorted(
+            merged_rows,
+            key=lambda row: (
+                not row["isStrongSignal"],
+                -row["triggerCount1h"],
+                not row["isHighlighted"],
+                -row["signalStrength"],
+                -safe_num(row["oiChange5m"]),
+            ),
+        )
+        async with self._lock:
+            self.rows = sorted_rows
+            self.status = {
+                "ok": bool(sorted_rows),
+                "message": f"scanning {scanned}/{total}",
+                "updatedAt": iso_now(),
+                "tracked": total,
+                "staleRows": sum(1 for row in sorted_rows if row["isStale"]),
+            }
+
+    def _row_with_current_age(self, symbol: str, state: SymbolState) -> dict[str, Any]:
+        row = dict(state.row)
+        async_config = self.config
+        data_age_seconds = int(time.time() - state.last_oi_at) if state.last_oi_at else 999999
+        is_stale = data_age_seconds > async_config.max_data_age_seconds
+        row["dataAgeSeconds"] = data_age_seconds
+        row["isStale"] = is_stale
+        if is_stale:
+            row["isHighlighted"] = False
+            row["isStrongSignal"] = False
+        row["updatedAt"] = iso_at(state.last_oi_at) if state.last_oi_at else row.get("updatedAt")
+        return row
+
+    def _build_row(
+        self,
+        symbol_info: dict[str, Any],
+        oi_payload: dict[str, Any],
+        premium: dict[str, Any],
+    ) -> dict[str, Any]:
+        symbol = symbol_info["symbol"]
+        now = time.time()
+        latest_price = float(symbol_info["lastPrice"])
+        open_interest = float(oi_payload.get("openInterest") or 0)
+        state = self.states[symbol]
+        state.oi_history.append((now, open_interest))
+        state.price_history.append((now, latest_price))
+        state.quote_volume_history.append((now, symbol_info["quoteVolume"]))
+        state.last_oi_at = now
+
+        oi_1m = pct_change_from_history(state.oi_history, now, 60)
+        oi_3m = pct_change_from_history(state.oi_history, now, 180)
+        oi_5m = pct_change_from_history(state.oi_history, now, 300)
+        price_5m = pct_change_from_history(state.price_history, now, 300)
+        volume_multiple = volume_multiple_from_quote_history(state.quote_volume_history, now)
+        funding_rate = float(premium.get("lastFundingRate") or 0) * 100
+        data_age_seconds = int(now - state.last_oi_at)
+
+        async_config = self.config
+        direction = classify_signal(oi_5m, price_5m, funding_rate, async_config.oi_5m_threshold)
+        strength = signal_strength(oi_5m, price_5m, volume_multiple, symbol_info["quoteVolume"])
+        is_stale = data_age_seconds > async_config.max_data_age_seconds
+        highlighted = (
+            oi_5m is not None
+            and volume_multiple is not None
+            and not is_stale
+            and safe_num(oi_5m) >= async_config.oi_5m_threshold
+            and safe_num(volume_multiple) >= async_config.volume_multiple_threshold
+        )
+        is_strong_signal = highlighted and strength >= async_config.signal_strength_threshold
+        self._prune_triggers(state, now)
+        if is_strong_signal and now - state.last_signal_at >= 180:
+            state.last_signal_at = now
+            state.trigger_times.append(now)
+
+        row = {
+            "symbol": symbol,
+            "latestPrice": latest_price,
+            "oiChange1m": oi_1m,
+            "oiChange3m": oi_3m,
+            "oiChange5m": oi_5m,
+            "priceChange5m": price_5m,
+            "volumeMultiple5m": volume_multiple,
+            "fundingRate": funding_rate,
+            "quoteVolume24h": symbol_info["quoteVolume"],
+            "signalDirection": direction,
+            "signalStrength": strength,
+            "triggerCount1h": len(state.trigger_times),
+            "lastSignalAt": iso_at(state.last_signal_at) if state.last_signal_at else None,
+            "repeatSignalLevel": repeat_signal_level(len(state.trigger_times)),
+            "dataAgeSeconds": data_age_seconds,
+            "isStale": is_stale,
+            "updatedAt": iso_now(),
+            "isHighlighted": highlighted,
+            "isStrongSignal": is_strong_signal,
+        }
+        if is_strong_signal and state.last_signal_at == now:
+            event = {
+                "symbol": symbol,
+                "signalDirection": direction,
+                "signalStrength": strength,
+                "triggerCount1h": len(state.trigger_times),
+                "oiChange5m": oi_5m,
+                "priceChange5m": price_5m,
+                "volumeMultiple5m": volume_multiple,
+                "fundingRate": funding_rate,
+                "quoteVolume24h": symbol_info["quoteVolume"],
+                "latestPrice": latest_price,
+                "createdAt": iso_at(now),
+            }
+            self.signal_events.appendleft(event)
+            asyncio.create_task(self._send_dingtalk_alert(event))
+        state.row = row
+        return row
+
+    async def _send_dingtalk_alert(self, event: dict[str, Any]) -> None:
+        if not DINGTALK_WEBHOOK:
+            return
+        payload = build_dingtalk_payload(event)
+        alert_record = {
+            "symbol": event["symbol"],
+            "createdAt": iso_now(),
+            "ok": False,
+            "message": "sending",
+        }
+        try:
+            timeout = httpx.Timeout(10.0, connect=5.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(DINGTALK_WEBHOOK, json=payload)
+                response.raise_for_status()
+                result = response.json()
+            ok = result.get("errcode") == 0
+            alert_record["ok"] = ok
+            alert_record["message"] = result.get("errmsg", "ok" if ok else "failed")
+        except Exception as exc:
+            alert_record["message"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            self.alert_events.appendleft(alert_record)
+
+    def _prune_triggers(self, state: SymbolState, now: float) -> None:
+        cutoff = now - 3600
+        while state.trigger_times and state.trigger_times[0] < cutoff:
+            state.trigger_times.popleft()
+
+
+async def get_json(
+    client: httpx.AsyncClient,
+    path: str,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    response = await client.get(f"{BINANCE_FAPI}{path}", params=params)
+    response.raise_for_status()
+    return response.json()
+
+
+def pct_change_from_history(history: deque[tuple[float, float]], now: float, seconds: int) -> float | None:
+    if len(history) < 2:
+        return None
+    target = now - seconds
+    baseline = history[0][1]
+    for ts, value in history:
+        if ts <= target:
+            baseline = value
+        else:
+            break
+    latest = history[-1][1]
+    if baseline <= 0:
+        return None
+    return ((latest - baseline) / baseline) * 100
+
+
+def volume_multiple_from_quote_history(history: deque[tuple[float, float]], now: float) -> float | None:
+    latest = value_at_or_before(history, now)
+    five_min_ago = value_at_or_before(history, now - 300)
+    ten_min_ago = value_at_or_before(history, now - 600)
+    if latest is None or five_min_ago is None or ten_min_ago is None:
+        return None
+    recent = latest - five_min_ago
+    previous = five_min_ago - ten_min_ago
+    if recent < 0 or previous <= 0:
+        return None
+    return recent / previous
+
+
+def value_at_or_before(history: deque[tuple[float, float]], target: float) -> float | None:
+    value = None
+    for ts, item_value in history:
+        if ts <= target:
+            value = item_value
+        else:
+            break
+    if value is None and history:
+        return history[0][1]
+    return value
+
+
+def append_unique_sample(history: deque[tuple[float, float]], sample: tuple[float, float]) -> None:
+    ts, value = sample
+    if not history or abs(history[-1][0] - ts) > 0.001:
+        history.append((ts, value))
+    else:
+        history[-1] = (ts, value)
+
+
+def classify_signal(oi_5m: float | None, price_5m: float | None, funding: float, oi_threshold: float) -> str:
+    oi = safe_num(oi_5m)
+    price = safe_num(price_5m)
+    if oi < oi_threshold:
+        return "观察"
+    if price >= 1.2 and funding >= 0.01:
+        return "挤空"
+    if price <= -1.2 and funding <= -0.01:
+        return "挤多"
+    if price >= 0.25:
+        return "多头增仓"
+    if price <= -0.25:
+        return "空头增仓"
+    return "仅OI增长"
+
+
+def signal_strength(
+    oi_5m: float | None,
+    price_5m: float | None,
+    volume_multiple: float | None,
+    quote_volume: float,
+) -> int:
+    oi_score = min(max(safe_num(oi_5m), 0) * 9, 45)
+    volume_score = min(max(safe_num(volume_multiple) - 1, 0) * 16, 25)
+    price_score = min(abs(safe_num(price_5m)) * 6, 18)
+    liquidity_score = min(math.log10(max(quote_volume, 1)) * 1.5, 12)
+    return int(round(min(100, oi_score + volume_score + price_score + liquidity_score)))
+
+
+def build_dingtalk_payload(event: dict[str, Any]) -> dict[str, Any]:
+    title = f"{DINGTALK_KEYWORD} {event['symbol']} 强信号"
+    text = "\n".join(
+        [
+            f"## {title}",
+            f"- 方向：{event['signalDirection']}",
+            f"- 强度：{event['signalStrength']}",
+            f"- 1小时触发：{event['triggerCount1h']} 次",
+            f"- 最新价：{format_price(event['latestPrice'])}",
+            f"- 5m OI：{format_pct(event['oiChange5m'])}",
+            f"- 5m价格：{format_pct(event['priceChange5m'])}",
+            f"- 5m量倍数：{format_multiple(event['volumeMultiple5m'])}",
+            f"- 资金费率：{format_pct(event['fundingRate'])}",
+            f"- 24h成交额：{format_money(event['quoteVolume24h'])}",
+            f"- 时间：{event['createdAt']}",
+        ]
+    )
+    return {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": title,
+            "text": text,
+        },
+    }
+
+
+def format_pct(value: float | None) -> str:
+    return "-" if value is None else f"{value:.2f}%"
+
+
+def format_multiple(value: float | None) -> str:
+    return "-" if value is None else f"{value:.2f}x"
+
+
+def format_price(value: float | None) -> str:
+    if value is None:
+        return "-"
+    if value >= 100:
+        return f"{value:.2f}"
+    if value >= 1:
+        return f"{value:.4f}"
+    return f"{value:.8f}".rstrip("0").rstrip(".")
+
+
+def format_money(value: float | None) -> str:
+    if value is None:
+        return "-"
+    if value >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.2f}B"
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    return f"{value:.0f}"
+
+
+def safe_num(value: float | None) -> float:
+    if value is None or math.isnan(value):
+        return 0.0
+    return value
+
+
+def iso_now() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+
+def iso_at(ts: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+
+
+def repeat_signal_level(count: int) -> str:
+    if count >= 3:
+        return "多次触发"
+    if count == 2:
+        return "二次触发"
+    if count == 1:
+        return "首次触发"
+    return "-"
+
+
+monitor = BinanceMonitor()
+app = FastAPI(title="Binance USDT Futures OI Spike Monitor")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    await monitor.start()
+
+
+@app.get("/")
+async def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/api/snapshot")
+async def api_snapshot() -> dict[str, Any]:
+    return await monitor.snapshot()
+
+
+@app.get("/api/config")
+async def api_get_config() -> dict[str, Any]:
+    snapshot = await monitor.snapshot()
+    return snapshot["config"]
+
+
+@app.post("/api/config")
+async def api_set_config(config: MonitorConfig) -> dict[str, Any]:
+    await monitor.update_config(config)
+    return await monitor.snapshot()
+
+
+@app.get("/events")
+async def events() -> StreamingResponse:
+    async def stream():
+        while True:
+            payload = await monitor.snapshot()
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(3)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
