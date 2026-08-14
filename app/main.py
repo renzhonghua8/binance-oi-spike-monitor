@@ -500,6 +500,7 @@ class BinanceMonitor:
             "signalDirection": row["signalDirection"],
             "signalStrength": row["signalStrength"],
         }
+        asyncio.create_task(self._send_dingtalk_trade_alert("模拟开仓", self.paper_positions[symbol]))
 
     def _maybe_close_paper_position(self, position: dict[str, Any], row: dict[str, Any]) -> None:
         config = self.config
@@ -539,6 +540,7 @@ class BinanceMonitor:
         }
         self.paper_trades.appendleft(trade)
         self.paper_positions.pop(position["symbol"], None)
+        asyncio.create_task(self._send_dingtalk_trade_alert("模拟平仓", trade))
 
     def _paper_snapshot(self) -> dict[str, Any]:
         row_map = {row["symbol"]: row for row in self.rows}
@@ -600,8 +602,17 @@ class BinanceMonitor:
         if not DINGTALK_WEBHOOK:
             return
         payload = build_dingtalk_payload(event)
+        await self._post_dingtalk_payload(payload, event["symbol"])
+
+    async def _send_dingtalk_trade_alert(self, action: str, trade: dict[str, Any]) -> None:
+        if not DINGTALK_WEBHOOK:
+            return
+        payload = build_dingtalk_trade_payload(action, trade)
+        await self._post_dingtalk_payload(payload, trade["symbol"])
+
+    async def _post_dingtalk_payload(self, payload: dict[str, Any], symbol: str) -> None:
         alert_record = {
-            "symbol": event["symbol"],
+            "symbol": symbol,
             "createdAt": iso_now(),
             "ok": False,
             "message": "sending",
@@ -751,6 +762,40 @@ def build_dingtalk_payload(event: dict[str, Any]) -> dict[str, Any]:
         "markdown": {
             "title": title,
             "text": text,
+        },
+    }
+
+
+def build_dingtalk_trade_payload(action: str, trade: dict[str, Any]) -> dict[str, Any]:
+    side_text = "做多" if trade["side"] == "long" else "做空"
+    title = f"{DINGTALK_KEYWORD} {action} {trade['symbol']} {side_text}"
+    lines = [
+        f"## {title}",
+        f"- 模式：模拟交易",
+        f"- 方向：{side_text}",
+        f"- 入场价：{format_price(trade['entryPrice'])}",
+        f"- 名义金额：{format_money(trade['notional'])} USDT",
+        f"- 数量：{trade['qty']:.6f}",
+        f"- 止损：{format_price(trade['stopPrice'])}",
+        f"- 止盈：{format_price(trade['takeProfitPrice'])}",
+        f"- 入场时间：{trade['entryTime']}",
+        f"- 信号：{trade['signalDirection']} / 强度 {trade['signalStrength']}",
+    ]
+    if action == "模拟平仓":
+        lines.extend(
+            [
+                f"- 出场价：{format_price(trade['exitPrice'])}",
+                f"- 平仓原因：{trade['exitReason']}",
+                f"- 手续费：{trade['fee']:.2f} USDT",
+                f"- 净盈亏：{trade['pnl']:.2f} USDT ({trade['pnlPct']:.2f}%)",
+                f"- 出场时间：{trade['exitTime']}",
+            ]
+        )
+    return {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": title,
+            "text": "\n".join(lines),
         },
     }
 
