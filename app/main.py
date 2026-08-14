@@ -36,6 +36,15 @@ class MonitorConfig(BaseModel):
     seed_top_symbols: int = Field(default=160, ge=0, le=500)
     kline_top_symbols: int = Field(default=120, ge=0, le=500)
     refresh_seconds: int = Field(default=45, ge=15, le=180)
+    paper_enabled: bool = True
+    paper_start_balance: float = Field(default=10_000, ge=100)
+    paper_risk_pct: float = Field(default=1.0, ge=0.1, le=10)
+    paper_stop_loss_pct: float = Field(default=1.2, ge=0.1, le=20)
+    paper_take_profit_pct: float = Field(default=2.4, ge=0.1, le=50)
+    paper_max_hold_minutes: int = Field(default=30, ge=1, le=240)
+    paper_max_open_positions: int = Field(default=5, ge=1, le=30)
+    paper_max_leverage: float = Field(default=3.0, ge=1, le=20)
+    paper_fee_rate_pct: float = Field(default=0.05, ge=0, le=1)
 
 
 @dataclass
@@ -57,6 +66,11 @@ class BinanceMonitor:
         self.rows: list[dict[str, Any]] = []
         self.signal_events: deque[dict[str, Any]] = deque(maxlen=500)
         self.alert_events: deque[dict[str, Any]] = deque(maxlen=200)
+        self.paper_balance = self.config.paper_start_balance
+        self.paper_positions: dict[str, dict[str, Any]] = {}
+        self.paper_trades: deque[dict[str, Any]] = deque(maxlen=500)
+        self.paper_equity_high = self.config.paper_start_balance
+        self.paper_max_drawdown_pct = 0.0
         self.status: dict[str, Any] = {
             "ok": False,
             "message": "warming up",
@@ -86,6 +100,7 @@ class BinanceMonitor:
                 "rows": self.rows,
                 "signals": list(self.signal_events),
                 "alerts": list(self.alert_events),
+                "paper": self._paper_snapshot(),
             }
 
     async def _run_loop(self) -> None:
@@ -127,6 +142,7 @@ class BinanceMonitor:
                 rows = await self._collect_rows(client, symbols, premium)
 
             now_iso = iso_now()
+            self._update_paper_trading(rows)
             async with self._lock:
                 self.rows = sorted(
                     rows,
@@ -422,6 +438,164 @@ class BinanceMonitor:
         state.row = row
         return row
 
+    def _update_paper_trading(self, rows: list[dict[str, Any]]) -> None:
+        config = self.config
+        if not config.paper_enabled:
+            return
+        row_map = {row["symbol"]: row for row in rows}
+        for symbol, position in list(self.paper_positions.items()):
+            row = row_map.get(symbol)
+            if row is None:
+                continue
+            self._maybe_close_paper_position(position, row)
+        for row in rows:
+            self._maybe_open_paper_position(row)
+        equity = self._paper_equity(row_map)
+        self.paper_equity_high = max(self.paper_equity_high, equity)
+        if self.paper_equity_high > 0:
+            drawdown = ((self.paper_equity_high - equity) / self.paper_equity_high) * 100
+            self.paper_max_drawdown_pct = max(self.paper_max_drawdown_pct, drawdown)
+
+    def _maybe_open_paper_position(self, row: dict[str, Any]) -> None:
+        config = self.config
+        symbol = row["symbol"]
+        side = paper_side_from_signal(row["signalDirection"])
+        if side is None:
+            return
+        if symbol in self.paper_positions:
+            return
+        if len(self.paper_positions) >= config.paper_max_open_positions:
+            return
+        if not row["isStrongSignal"] or row["isStale"]:
+            return
+        latest_price = float(row["latestPrice"])
+        if latest_price <= 0:
+            return
+        risk_amount = self.paper_balance * (config.paper_risk_pct / 100)
+        stop_loss_pct = config.paper_stop_loss_pct / 100
+        notional_by_risk = risk_amount / stop_loss_pct
+        max_total_notional = self.paper_balance * config.paper_max_leverage
+        used_notional = sum(position["notional"] for position in self.paper_positions.values())
+        remaining_notional = max(0.0, max_total_notional - used_notional)
+        notional = min(notional_by_risk, remaining_notional)
+        if notional <= 0:
+            return
+        qty = notional / latest_price
+        if side == "long":
+            stop_price = latest_price * (1 - config.paper_stop_loss_pct / 100)
+            take_profit_price = latest_price * (1 + config.paper_take_profit_pct / 100)
+        else:
+            stop_price = latest_price * (1 + config.paper_stop_loss_pct / 100)
+            take_profit_price = latest_price * (1 - config.paper_take_profit_pct / 100)
+        self.paper_positions[symbol] = {
+            "symbol": symbol,
+            "side": side,
+            "entryPrice": latest_price,
+            "qty": qty,
+            "notional": notional,
+            "stopPrice": stop_price,
+            "takeProfitPrice": take_profit_price,
+            "entryAt": time.time(),
+            "entryTime": iso_now(),
+            "signalDirection": row["signalDirection"],
+            "signalStrength": row["signalStrength"],
+        }
+
+    def _maybe_close_paper_position(self, position: dict[str, Any], row: dict[str, Any]) -> None:
+        config = self.config
+        latest_price = float(row["latestPrice"])
+        side_mult = 1 if position["side"] == "long" else -1
+        return_pct = ((latest_price - position["entryPrice"]) / position["entryPrice"]) * side_mult * 100
+        age_minutes = (time.time() - position["entryAt"]) / 60
+        reason = None
+        if return_pct <= -config.paper_stop_loss_pct:
+            reason = "止损"
+        elif return_pct >= config.paper_take_profit_pct:
+            reason = "止盈"
+        elif age_minutes >= config.paper_max_hold_minutes:
+            reason = "超时"
+        else:
+            new_side = paper_side_from_signal(row["signalDirection"])
+            if new_side and new_side != position["side"] and row["isStrongSignal"]:
+                reason = "反向信号"
+        if reason:
+            self._close_paper_position(position, latest_price, reason)
+
+    def _close_paper_position(self, position: dict[str, Any], exit_price: float, reason: str) -> None:
+        side_mult = 1 if position["side"] == "long" else -1
+        gross_pnl = position["notional"] * ((exit_price - position["entryPrice"]) / position["entryPrice"]) * side_mult
+        fee = position["notional"] * (self.config.paper_fee_rate_pct / 100) * 2
+        net_pnl = gross_pnl - fee
+        self.paper_balance += net_pnl
+        trade = {
+            **position,
+            "exitPrice": exit_price,
+            "exitTime": iso_now(),
+            "exitReason": reason,
+            "grossPnl": gross_pnl,
+            "fee": fee,
+            "pnl": net_pnl,
+            "pnlPct": (net_pnl / position["notional"]) * 100 if position["notional"] else 0,
+        }
+        self.paper_trades.appendleft(trade)
+        self.paper_positions.pop(position["symbol"], None)
+
+    def _paper_snapshot(self) -> dict[str, Any]:
+        row_map = {row["symbol"]: row for row in self.rows}
+        equity = self._paper_equity(row_map)
+        closed = list(self.paper_trades)
+        wins = sum(1 for trade in closed if trade["pnl"] > 0)
+        total = len(closed)
+        return {
+            "enabled": self.config.paper_enabled,
+            "balance": self.paper_balance,
+            "equity": equity,
+            "totalPnl": equity - self.config.paper_start_balance,
+            "totalPnlPct": ((equity - self.config.paper_start_balance) / self.config.paper_start_balance) * 100,
+            "openCount": len(self.paper_positions),
+            "closedCount": total,
+            "winRate": (wins / total) * 100 if total else 0,
+            "maxDrawdownPct": self.paper_max_drawdown_pct,
+            "positions": [self._paper_position_view(position, row_map.get(symbol)) for symbol, position in self.paper_positions.items()],
+            "trades": closed[:100],
+        }
+
+    def _paper_equity(self, row_map: dict[str, dict[str, Any]]) -> float:
+        unrealized = 0.0
+        for symbol, position in self.paper_positions.items():
+            row = row_map.get(symbol)
+            if row:
+                unrealized += self._paper_unrealized_pnl(position, float(row["latestPrice"]))
+        return self.paper_balance + unrealized
+
+    def _paper_position_view(
+        self,
+        position: dict[str, Any],
+        row: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        latest_price = float(row["latestPrice"]) if row else position["entryPrice"]
+        unrealized = self._paper_unrealized_pnl(position, latest_price)
+        return {
+            **position,
+            "latestPrice": latest_price,
+            "unrealizedPnl": unrealized,
+            "unrealizedPnlPct": (unrealized / position["notional"]) * 100 if position["notional"] else 0,
+            "ageMinutes": (time.time() - position["entryAt"]) / 60,
+        }
+
+    def _paper_unrealized_pnl(self, position: dict[str, Any], latest_price: float) -> float:
+        side_mult = 1 if position["side"] == "long" else -1
+        gross_pnl = position["notional"] * ((latest_price - position["entryPrice"]) / position["entryPrice"]) * side_mult
+        exit_fee = position["notional"] * (self.config.paper_fee_rate_pct / 100)
+        return gross_pnl - exit_fee
+
+    def reset_paper(self) -> None:
+        self.paper_balance = self.config.paper_start_balance
+        self.paper_positions.clear()
+        self.paper_trades.clear()
+        self.paper_equity_high = self.config.paper_start_balance
+        self.paper_max_drawdown_pct = 0.0
+
     async def _send_dingtalk_alert(self, event: dict[str, Any]) -> None:
         if not DINGTALK_WEBHOOK:
             return
@@ -531,6 +705,14 @@ def classify_signal(oi_5m: float | None, price_5m: float | None, funding: float,
     if price <= -0.25:
         return "空头增仓"
     return "仅OI增长"
+
+
+def paper_side_from_signal(signal_direction: str) -> str | None:
+    if signal_direction in {"多头增仓", "挤空"}:
+        return "long"
+    if signal_direction in {"空头增仓", "挤多"}:
+        return "short"
+    return None
 
 
 def signal_strength(
@@ -654,6 +836,12 @@ async def api_get_config() -> dict[str, Any]:
 @app.post("/api/config")
 async def api_set_config(config: MonitorConfig) -> dict[str, Any]:
     await monitor.update_config(config)
+    return await monitor.snapshot()
+
+
+@app.post("/api/paper/reset")
+async def api_reset_paper() -> dict[str, Any]:
+    monitor.reset_paper()
     return await monitor.snapshot()
 
 

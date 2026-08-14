@@ -2,6 +2,7 @@ const state = {
   rows: [],
   signals: [],
   alerts: [],
+  paper: null,
   sortKey: "signalStrength",
   sortDir: "desc",
   search: "",
@@ -30,10 +31,11 @@ function initStream() {
 }
 
 function applySnapshot(snapshot) {
-  const { config, status, rows, signals, alerts } = snapshot;
+  const { config, status, rows, signals, alerts, paper } = snapshot;
   state.rows = rows || [];
   state.signals = signals || [];
   state.alerts = alerts || [];
+  state.paper = paper || null;
   fields.monitorAll.checked = Boolean(config.monitor_all);
   fields.topSymbols.value = config.top_symbols;
   fields.oiThreshold.value = config.oi_5m_threshold;
@@ -58,6 +60,7 @@ function applySnapshot(snapshot) {
     : "待触发";
   renderRows();
   renderSignals();
+  renderPaper();
 }
 
 function setStatus(ok, message) {
@@ -126,6 +129,48 @@ function renderSignals() {
     .join("");
 }
 
+function renderPaper() {
+  const paper = state.paper;
+  if (!paper) return;
+  document.querySelector("#paperEquity").textContent = moneyFull(paper.equity);
+  document.querySelector("#paperPnl").textContent = `${moneyFull(paper.totalPnl)} (${paper.totalPnlPct.toFixed(2)}%)`;
+  document.querySelector("#paperPnl").className = paper.totalPnl >= 0 ? "up" : "down";
+  document.querySelector("#paperOpen").textContent = paper.openCount;
+  document.querySelector("#paperClosed").textContent = paper.closedCount;
+  document.querySelector("#paperWinRate").textContent = `${paper.winRate.toFixed(1)}%`;
+  document.querySelector("#paperDrawdown").textContent = `${paper.maxDrawdownPct.toFixed(2)}%`;
+
+  document.querySelector("#paperPositions").innerHTML = paper.positions
+    .map((position) => `
+      <tr>
+        <td class="symbol">${position.symbol}</td>
+        <td><span class="badge ${position.side === "long" ? "long" : "short"}">${position.side === "long" ? "做多" : "做空"}</span></td>
+        <td>${price(position.entryPrice)}</td>
+        <td>${price(position.latestPrice)}</td>
+        <td>${price(position.stopPrice)}</td>
+        <td>${price(position.takeProfitPrice)}</td>
+        <td class="${position.unrealizedPnl >= 0 ? "up" : "down"}">${moneyFull(position.unrealizedPnl)} (${position.unrealizedPnlPct.toFixed(2)}%)</td>
+        <td>${position.ageMinutes.toFixed(1)}m</td>
+      </tr>
+    `)
+    .join("");
+
+  document.querySelector("#paperTrades").innerHTML = paper.trades
+    .slice(0, 30)
+    .map((trade) => `
+      <tr>
+        <td>${trade.exitTime}</td>
+        <td class="symbol">${trade.symbol}</td>
+        <td><span class="badge ${trade.side === "long" ? "long" : "short"}">${trade.side === "long" ? "做多" : "做空"}</span></td>
+        <td>${price(trade.entryPrice)}</td>
+        <td>${price(trade.exitPrice)}</td>
+        <td>${trade.exitReason}</td>
+        <td class="${trade.pnl >= 0 ? "up" : "down"}">${moneyFull(trade.pnl)} (${trade.pnlPct.toFixed(2)}%)</td>
+      </tr>
+    `)
+    .join("");
+}
+
 function compareRows(a, b) {
   const av = a[state.sortKey];
   const bv = b[state.sortKey];
@@ -163,6 +208,11 @@ function money(value) {
   if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(2)}B`;
   if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
   return num.toLocaleString();
+}
+
+function moneyFull(value) {
+  const num = Number(value) || 0;
+  return `${num >= 0 ? "" : "-"}${Math.abs(num).toFixed(2)}`;
 }
 
 function tone(value) {
@@ -222,6 +272,10 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
 
 fields.monitorAll.addEventListener("change", () => {
   fields.topSymbols.disabled = fields.monitorAll.checked;
+});
+
+document.querySelector("#resetPaper").addEventListener("click", async () => {
+  await fetch("/api/paper/reset", { method: "POST" });
 });
 
 initStream();
