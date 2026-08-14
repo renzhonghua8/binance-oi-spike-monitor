@@ -393,9 +393,11 @@ class BinanceMonitor:
         is_strong_signal = highlighted and strength >= async_config.signal_strength_threshold
         should_record_signal = direction != "观察" and not is_stale
         self._prune_triggers(state, now)
+        recorded_signal = False
         if should_record_signal and now - state.last_signal_at >= 180:
             state.last_signal_at = now
             state.trigger_times.append(now)
+            recorded_signal = True
 
         row = {
             "symbol": symbol,
@@ -418,7 +420,7 @@ class BinanceMonitor:
             "isHighlighted": highlighted,
             "isStrongSignal": is_strong_signal,
         }
-        if should_record_signal and state.last_signal_at == now:
+        if recorded_signal:
             event = {
                 "symbol": symbol,
                 "signalDirection": direction,
@@ -434,7 +436,7 @@ class BinanceMonitor:
                 "createdAt": iso_at(now),
             }
             self.signal_events.appendleft(event)
-            asyncio.create_task(self._send_dingtalk_alert(event))
+            schedule_background_task(self._send_dingtalk_alert(event))
         state.row = row
         return row
 
@@ -500,7 +502,7 @@ class BinanceMonitor:
             "signalDirection": row["signalDirection"],
             "signalStrength": row["signalStrength"],
         }
-        asyncio.create_task(self._send_dingtalk_trade_alert("模拟开仓", self.paper_positions[symbol]))
+        schedule_background_task(self._send_dingtalk_trade_alert("模拟开仓", self.paper_positions[symbol]))
 
     def _maybe_close_paper_position(self, position: dict[str, Any], row: dict[str, Any]) -> None:
         config = self.config
@@ -540,7 +542,7 @@ class BinanceMonitor:
         }
         self.paper_trades.appendleft(trade)
         self.paper_positions.pop(position["symbol"], None)
-        asyncio.create_task(self._send_dingtalk_trade_alert("模拟平仓", trade))
+        schedule_background_task(self._send_dingtalk_trade_alert("模拟平仓", trade))
 
     def _paper_snapshot(self) -> dict[str, Any]:
         row_map = {row["symbol"]: row for row in self.rows}
@@ -850,6 +852,15 @@ def repeat_signal_level(count: int) -> str:
     if count == 1:
         return "首次触发"
     return "-"
+
+
+def schedule_background_task(coro: Any) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        coro.close()
+        return
+    loop.create_task(coro)
 
 
 monitor = BinanceMonitor()
