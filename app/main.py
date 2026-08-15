@@ -42,6 +42,7 @@ class MonitorConfig(BaseModel):
     paper_stop_loss_pct: float = Field(default=2.0, ge=0.1, le=20)
     paper_take_profit_pct: float = Field(default=4.0, ge=0.1, le=50)
     paper_max_hold_minutes: int = Field(default=45, ge=1, le=240)
+    paper_reentry_cooldown_minutes: int = Field(default=10, ge=0, le=120)
     paper_max_open_positions: int = Field(default=5, ge=1, le=30)
     paper_max_leverage: float = Field(default=3.0, ge=1, le=20)
     paper_fee_rate_pct: float = Field(default=0.05, ge=0, le=1)
@@ -69,6 +70,7 @@ class BinanceMonitor:
         self.paper_balance = self.config.paper_start_balance
         self.paper_positions: dict[str, dict[str, Any]] = {}
         self.paper_trades: deque[dict[str, Any]] = deque(maxlen=500)
+        self.paper_cooldowns: dict[str, float] = {}
         self.paper_equity_high = self.config.paper_start_balance
         self.paper_max_drawdown_pct = 0.0
         self.status: dict[str, Any] = {
@@ -466,6 +468,9 @@ class BinanceMonitor:
             return
         if symbol in self.paper_positions:
             return
+        cooldown_until = self.paper_cooldowns.get(symbol, 0)
+        if time.time() < cooldown_until:
+            return
         if len(self.paper_positions) >= config.paper_max_open_positions:
             return
         if not row["isStrongSignal"] or row["isStale"]:
@@ -542,6 +547,9 @@ class BinanceMonitor:
         }
         self.paper_trades.appendleft(trade)
         self.paper_positions.pop(position["symbol"], None)
+        cooldown_seconds = self.config.paper_reentry_cooldown_minutes * 60
+        if cooldown_seconds > 0:
+            self.paper_cooldowns[position["symbol"]] = time.time() + cooldown_seconds
         schedule_background_task(self._send_dingtalk_trade_alert("模拟平仓", trade))
 
     def _paper_snapshot(self) -> dict[str, Any]:
@@ -597,6 +605,7 @@ class BinanceMonitor:
         self.paper_balance = self.config.paper_start_balance
         self.paper_positions.clear()
         self.paper_trades.clear()
+        self.paper_cooldowns.clear()
         self.paper_equity_high = self.config.paper_start_balance
         self.paper_max_drawdown_pct = 0.0
 
