@@ -111,6 +111,47 @@
           <div><span>已平仓</span><strong id="paperClosed">0</strong></div>
           <div><span>胜率</span><strong id="paperWinRate">0%</strong></div>
           <div><span>最大回撤</span><strong id="paperDrawdown">0%</strong></div>
+          <div><span>今日盈亏</span><strong id="paperDailyPnl">-</strong></div>
+          <div><span>连续亏损</span><strong id="paperLossStreak">0</strong></div>
+          <div><span>开仓状态</span><strong id="paperOpenStatus">正常</strong></div>
+        </div>
+        <div class="paperStrategy">
+          <div class="paperPanel">
+            <div class="miniHead">按信号方向统计</div>
+            <div class="tableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>类型</th>
+                    <th>笔数</th>
+                    <th>胜率</th>
+                    <th>净盈亏</th>
+                    <th>平均</th>
+                    <th>盈亏因子</th>
+                  </tr>
+                </thead>
+                <tbody id="paperSignalStats"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="paperPanel">
+            <div class="miniHead">按入场类型统计</div>
+            <div class="tableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>类型</th>
+                    <th>笔数</th>
+                    <th>胜率</th>
+                    <th>净盈亏</th>
+                    <th>平均</th>
+                    <th>盈亏因子</th>
+                  </tr>
+                </thead>
+                <tbody id="paperEntryStats"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
         <div class="paperTables">
           <div class="paperPanel positionsPanel">

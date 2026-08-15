@@ -139,6 +139,13 @@ function renderPaper() {
   document.querySelector("#paperClosed").textContent = paper.closedCount;
   document.querySelector("#paperWinRate").textContent = `${paper.winRate.toFixed(1)}%`;
   document.querySelector("#paperDrawdown").textContent = `${paper.maxDrawdownPct.toFixed(2)}%`;
+  document.querySelector("#paperDailyPnl").textContent = `${moneyFull(paper.dailyPnl)} (${paper.dailyPnlPct.toFixed(2)}%)`;
+  document.querySelector("#paperDailyPnl").className = paper.dailyPnl >= 0 ? "up" : "down";
+  document.querySelector("#paperLossStreak").textContent = paper.consecutiveLosses;
+  document.querySelector("#paperOpenStatus").textContent = paper.openingPaused ? paper.pauseReason : "正常";
+  document.querySelector("#paperOpenStatus").className = paper.openingPaused ? "down" : "up";
+  renderPaperStats("#paperSignalStats", paper.statsBySignal || []);
+  renderPaperStats("#paperEntryStats", paper.statsByEntryType || []);
 
   document.querySelector("#paperPositions").innerHTML = paper.positions
     .map((position) => `
@@ -166,6 +173,22 @@ function renderPaper() {
         <td>${price(trade.exitPrice)}</td>
         <td>${trade.exitReason}</td>
         <td class="${trade.pnl >= 0 ? "up" : "down"}">${moneyFull(trade.pnl)} (${trade.pnlPct.toFixed(2)}%)</td>
+      </tr>
+    `)
+    .join("");
+}
+
+function renderPaperStats(selector, stats) {
+  document.querySelector(selector).innerHTML = stats
+    .slice(0, 8)
+    .map((item) => `
+      <tr>
+        <td class="symbol">${item.name}</td>
+        <td>${item.total}</td>
+        <td>${item.winRate.toFixed(1)}%</td>
+        <td class="${item.pnl >= 0 ? "up" : "down"}">${moneyFull(item.pnl)}</td>
+        <td class="${item.avgPnl >= 0 ? "up" : "down"}">${moneyFull(item.avgPnl)}</td>
+        <td>${item.profitFactor === null ? "-" : Number(item.profitFactor).toFixed(2)}</td>
       </tr>
     `)
     .join("");

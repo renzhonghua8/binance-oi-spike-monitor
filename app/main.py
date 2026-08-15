@@ -53,6 +53,12 @@ class MonitorConfig(BaseModel):
     paper_max_open_positions: int = Field(default=5, ge=1, le=30)
     paper_max_leverage: float = Field(default=3.0, ge=1, le=20)
     paper_fee_rate_pct: float = Field(default=0.05, ge=0, le=1)
+    paper_breakeven_trigger_pct: float = Field(default=2.0, ge=0.1, le=20)
+    paper_trailing_trigger_pct: float = Field(default=3.0, ge=0.1, le=30)
+    paper_trailing_protect_ratio: float = Field(default=0.5, ge=0.1, le=0.95)
+    paper_daily_loss_limit_pct: float = Field(default=2.0, ge=0.1, le=20)
+    paper_max_consecutive_losses: int = Field(default=3, ge=1, le=20)
+    paper_loss_pause_minutes: int = Field(default=180, ge=1, le=1440)
 
 
 @dataclass
@@ -81,6 +87,10 @@ class BinanceMonitor:
         self.paper_roll_setups: dict[str, dict[str, Any]] = {}
         self.paper_equity_high = self.config.paper_start_balance
         self.paper_max_drawdown_pct = 0.0
+        self.paper_day = local_day()
+        self.paper_day_start_balance = self.config.paper_start_balance
+        self.paper_consecutive_losses = 0
+        self.paper_pause_until = 0.0
         self.status: dict[str, Any] = {
             "ok": False,
             "message": "warming up",
@@ -455,6 +465,7 @@ class BinanceMonitor:
         if not config.paper_enabled:
             return
         row_map = {row["symbol"]: row for row in rows}
+        self._refresh_paper_day(self._paper_equity(row_map))
         for symbol, position in list(self.paper_positions.items()):
             row = row_map.get(symbol)
             if row is None:
@@ -475,6 +486,8 @@ class BinanceMonitor:
         if side is None:
             return
         if symbol in self.paper_positions:
+            return
+        if self._paper_opening_paused():
             return
         cooldown_until = self.paper_cooldowns.get(symbol, 0)
         if time.time() < cooldown_until:
@@ -516,6 +529,7 @@ class BinanceMonitor:
             "qty": qty,
             "notional": notional,
             "stopPrice": stop_price,
+            "initialStopPrice": stop_price,
             "takeProfitPrice": take_profit_price,
             "entryAt": time.time(),
             "entryTime": iso_now(),
@@ -525,6 +539,8 @@ class BinanceMonitor:
             "rollCount": roll_setup["nextRollCount"] if roll_setup else 0,
             "stopLossPct": stop_loss_pct_value,
             "takeProfitPct": take_profit_pct_value,
+            "bestReturnPct": 0.0,
+            "trailingStopActive": False,
         }
         if roll_setup:
             self.paper_roll_setups.pop(symbol, None)
@@ -575,11 +591,14 @@ class BinanceMonitor:
         latest_price = float(row["latestPrice"])
         side_mult = 1 if position["side"] == "long" else -1
         return_pct = ((latest_price - position["entryPrice"]) / position["entryPrice"]) * side_mult * 100
+        self._update_paper_trailing_stop(position, latest_price, return_pct)
         age_minutes = (time.time() - position["entryAt"]) / 60
         stop_loss_pct = float(position.get("stopLossPct", config.paper_stop_loss_pct))
         take_profit_pct = float(position.get("takeProfitPct", config.paper_take_profit_pct))
         reason = None
-        if return_pct <= -stop_loss_pct:
+        if self._paper_stop_hit(position, latest_price):
+            reason = "移动止损" if position.get("trailingStopActive") else "止损"
+        elif return_pct <= -stop_loss_pct:
             reason = "止损"
         elif return_pct >= take_profit_pct:
             reason = "止盈"
@@ -610,8 +629,76 @@ class BinanceMonitor:
         }
         self.paper_trades.appendleft(trade)
         self.paper_positions.pop(position["symbol"], None)
+        self._update_paper_risk_state(net_pnl)
         self._update_paper_reentry_state(position, exit_price, reason)
         schedule_background_task(self._send_dingtalk_trade_alert("模拟平仓", trade))
+
+    def _update_paper_trailing_stop(self, position: dict[str, Any], latest_price: float, return_pct: float) -> None:
+        config = self.config
+        position["bestReturnPct"] = max(float(position.get("bestReturnPct", 0)), return_pct)
+        if return_pct < config.paper_breakeven_trigger_pct:
+            return
+        side = position["side"]
+        entry_price = float(position["entryPrice"])
+        if side == "long":
+            breakeven_stop = entry_price
+            if breakeven_stop > float(position["stopPrice"]):
+                position["stopPrice"] = breakeven_stop
+                position["trailingStopActive"] = True
+        else:
+            breakeven_stop = entry_price
+            if breakeven_stop < float(position["stopPrice"]):
+                position["stopPrice"] = breakeven_stop
+                position["trailingStopActive"] = True
+        if return_pct < config.paper_trailing_trigger_pct:
+            return
+        protected_return = max(0.0, position["bestReturnPct"] * config.paper_trailing_protect_ratio)
+        if side == "long":
+            trailing_stop = entry_price * (1 + protected_return / 100)
+            if trailing_stop > float(position["stopPrice"]):
+                position["stopPrice"] = trailing_stop
+                position["trailingStopActive"] = True
+        else:
+            trailing_stop = entry_price * (1 - protected_return / 100)
+            if trailing_stop < float(position["stopPrice"]):
+                position["stopPrice"] = trailing_stop
+                position["trailingStopActive"] = True
+
+    def _paper_stop_hit(self, position: dict[str, Any], latest_price: float) -> bool:
+        if position["side"] == "long":
+            return latest_price <= float(position["stopPrice"])
+        return latest_price >= float(position["stopPrice"])
+
+    def _refresh_paper_day(self, equity: float) -> None:
+        today = local_day()
+        if self.paper_day == today:
+            return
+        self.paper_day = today
+        self.paper_day_start_balance = equity
+        self.paper_consecutive_losses = 0
+        self.paper_pause_until = 0.0
+
+    def _paper_opening_paused(self) -> bool:
+        if time.time() < self.paper_pause_until:
+            return True
+        daily_pnl_pct = self._paper_daily_pnl_pct()
+        return daily_pnl_pct <= -self.config.paper_daily_loss_limit_pct
+
+    def _paper_daily_pnl(self) -> float:
+        return self.paper_balance - self.paper_day_start_balance
+
+    def _paper_daily_pnl_pct(self) -> float:
+        if self.paper_day_start_balance <= 0:
+            return 0.0
+        return (self._paper_daily_pnl() / self.paper_day_start_balance) * 100
+
+    def _update_paper_risk_state(self, net_pnl: float) -> None:
+        if net_pnl < 0:
+            self.paper_consecutive_losses += 1
+            if self.paper_consecutive_losses >= self.config.paper_max_consecutive_losses:
+                self.paper_pause_until = time.time() + self.config.paper_loss_pause_minutes * 60
+        else:
+            self.paper_consecutive_losses = 0
 
     def _update_paper_reentry_state(self, position: dict[str, Any], exit_price: float, reason: str) -> None:
         symbol = position["symbol"]
@@ -636,6 +723,7 @@ class BinanceMonitor:
         closed = list(self.paper_trades)
         wins = sum(1 for trade in closed if trade["pnl"] > 0)
         total = len(closed)
+        opening_paused = self._paper_opening_paused()
         return {
             "enabled": self.config.paper_enabled,
             "balance": self.paper_balance,
@@ -646,9 +734,55 @@ class BinanceMonitor:
             "closedCount": total,
             "winRate": (wins / total) * 100 if total else 0,
             "maxDrawdownPct": self.paper_max_drawdown_pct,
+            "dailyPnl": self._paper_daily_pnl(),
+            "dailyPnlPct": self._paper_daily_pnl_pct(),
+            "consecutiveLosses": self.paper_consecutive_losses,
+            "openingPaused": opening_paused,
+            "pauseReason": self._paper_pause_reason() if opening_paused else "正常",
+            "pauseUntil": iso_at(self.paper_pause_until) if time.time() < self.paper_pause_until else "-",
+            "statsBySignal": self._paper_group_stats("signalDirection"),
+            "statsByEntryType": self._paper_group_stats("entryType"),
             "positions": [self._paper_position_view(position, row_map.get(symbol)) for symbol, position in self.paper_positions.items()],
             "trades": closed[:100],
         }
+
+    def _paper_pause_reason(self) -> str:
+        if time.time() < self.paper_pause_until:
+            return f"连亏暂停，至 {iso_at(self.paper_pause_until)}"
+        if self._paper_daily_pnl_pct() <= -self.config.paper_daily_loss_limit_pct:
+            return "今日亏损达到上限"
+        return "正常"
+
+    def _paper_group_stats(self, key: str) -> list[dict[str, Any]]:
+        groups: dict[str, dict[str, Any]] = {}
+        for trade in self.paper_trades:
+            label = str(trade.get(key) or "-")
+            group = groups.setdefault(label, {"name": label, "total": 0, "wins": 0, "pnl": 0.0, "grossWin": 0.0, "grossLoss": 0.0})
+            pnl = float(trade.get("pnl") or 0)
+            group["total"] += 1
+            group["pnl"] += pnl
+            if pnl > 0:
+                group["wins"] += 1
+                group["grossWin"] += pnl
+            elif pnl < 0:
+                group["grossLoss"] += abs(pnl)
+        stats = []
+        for group in groups.values():
+            total = group["total"]
+            losses = total - group["wins"]
+            stats.append(
+                {
+                    "name": group["name"],
+                    "total": total,
+                    "wins": group["wins"],
+                    "losses": losses,
+                    "winRate": (group["wins"] / total) * 100 if total else 0,
+                    "pnl": group["pnl"],
+                    "avgPnl": group["pnl"] / total if total else 0,
+                    "profitFactor": (group["grossWin"] / group["grossLoss"]) if group["grossLoss"] > 0 else None,
+                }
+            )
+        return sorted(stats, key=lambda item: item["pnl"], reverse=True)
 
     def _paper_equity(self, row_map: dict[str, dict[str, Any]]) -> float:
         unrealized = 0.0
@@ -687,6 +821,10 @@ class BinanceMonitor:
         self.paper_roll_setups.clear()
         self.paper_equity_high = self.config.paper_start_balance
         self.paper_max_drawdown_pct = 0.0
+        self.paper_day = local_day()
+        self.paper_day_start_balance = self.config.paper_start_balance
+        self.paper_consecutive_losses = 0
+        self.paper_pause_until = 0.0
 
     async def _send_dingtalk_alert(self, event: dict[str, Any]) -> None:
         if not DINGTALK_WEBHOOK:
@@ -931,6 +1069,10 @@ def iso_now() -> str:
 
 def iso_at(ts: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+
+
+def local_day() -> str:
+    return time.strftime("%Y-%m-%d", time.localtime())
 
 
 def repeat_signal_level(count: int) -> str:

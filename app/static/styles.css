@@ -294,7 +294,7 @@ td b {
 
 .paperStats {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
   margin-bottom: 10px;
 }
@@ -322,6 +322,13 @@ td b {
   display: grid;
   grid-template-columns: 1fr;
   gap: 10px;
+}
+
+.paperStrategy {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .paperPanel {
@@ -386,6 +393,7 @@ td b {
   .controls,
   .summary,
   .paperStats,
+  .paperStrategy,
   .paperTables {
     grid-template-columns: 1fr;
   }
