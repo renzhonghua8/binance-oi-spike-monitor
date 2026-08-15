@@ -42,7 +42,14 @@ class MonitorConfig(BaseModel):
     paper_stop_loss_pct: float = Field(default=2.0, ge=0.1, le=20)
     paper_take_profit_pct: float = Field(default=4.0, ge=0.1, le=50)
     paper_max_hold_minutes: int = Field(default=45, ge=1, le=240)
-    paper_reentry_cooldown_minutes: int = Field(default=10, ge=0, le=120)
+    paper_reentry_cooldown_minutes: int = Field(default=15, ge=0, le=120)
+    paper_roll_window_minutes: int = Field(default=10, ge=1, le=60)
+    paper_max_roll_entries: int = Field(default=2, ge=0, le=5)
+    paper_pullback_roll_risk_factor: float = Field(default=0.5, ge=0.1, le=1)
+    paper_momentum_roll_risk_factor: float = Field(default=0.3, ge=0.1, le=1)
+    paper_roll_stop_loss_pct: float = Field(default=1.5, ge=0.1, le=10)
+    paper_pullback_min_pct: float = Field(default=0.5, ge=0.1, le=10)
+    paper_pullback_max_pct: float = Field(default=1.2, ge=0.1, le=10)
     paper_max_open_positions: int = Field(default=5, ge=1, le=30)
     paper_max_leverage: float = Field(default=3.0, ge=1, le=20)
     paper_fee_rate_pct: float = Field(default=0.05, ge=0, le=1)
@@ -71,6 +78,7 @@ class BinanceMonitor:
         self.paper_positions: dict[str, dict[str, Any]] = {}
         self.paper_trades: deque[dict[str, Any]] = deque(maxlen=500)
         self.paper_cooldowns: dict[str, float] = {}
+        self.paper_roll_setups: dict[str, dict[str, Any]] = {}
         self.paper_equity_high = self.config.paper_start_balance
         self.paper_max_drawdown_pct = 0.0
         self.status: dict[str, Any] = {
@@ -478,8 +486,15 @@ class BinanceMonitor:
         latest_price = float(row["latestPrice"])
         if latest_price <= 0:
             return
-        risk_amount = self.paper_balance * (config.paper_risk_pct / 100)
-        stop_loss_pct = config.paper_stop_loss_pct / 100
+        had_roll_setup = symbol in self.paper_roll_setups
+        roll_setup = self._paper_roll_setup_for(row, side, latest_price)
+        if had_roll_setup and not roll_setup and symbol in self.paper_roll_setups:
+            return
+        risk_factor = roll_setup["riskFactor"] if roll_setup else 1.0
+        stop_loss_pct_value = config.paper_roll_stop_loss_pct if roll_setup else config.paper_stop_loss_pct
+        take_profit_pct_value = config.paper_take_profit_pct
+        risk_amount = self.paper_balance * (config.paper_risk_pct / 100) * risk_factor
+        stop_loss_pct = stop_loss_pct_value / 100
         notional_by_risk = risk_amount / stop_loss_pct
         max_total_notional = self.paper_balance * config.paper_max_leverage
         used_notional = sum(position["notional"] for position in self.paper_positions.values())
@@ -489,11 +504,11 @@ class BinanceMonitor:
             return
         qty = notional / latest_price
         if side == "long":
-            stop_price = latest_price * (1 - config.paper_stop_loss_pct / 100)
-            take_profit_price = latest_price * (1 + config.paper_take_profit_pct / 100)
+            stop_price = latest_price * (1 - stop_loss_pct_value / 100)
+            take_profit_price = latest_price * (1 + take_profit_pct_value / 100)
         else:
-            stop_price = latest_price * (1 + config.paper_stop_loss_pct / 100)
-            take_profit_price = latest_price * (1 - config.paper_take_profit_pct / 100)
+            stop_price = latest_price * (1 + stop_loss_pct_value / 100)
+            take_profit_price = latest_price * (1 - take_profit_pct_value / 100)
         self.paper_positions[symbol] = {
             "symbol": symbol,
             "side": side,
@@ -506,8 +521,54 @@ class BinanceMonitor:
             "entryTime": iso_now(),
             "signalDirection": row["signalDirection"],
             "signalStrength": row["signalStrength"],
+            "entryType": roll_setup["mode"] if roll_setup else "首仓",
+            "rollCount": roll_setup["nextRollCount"] if roll_setup else 0,
+            "stopLossPct": stop_loss_pct_value,
+            "takeProfitPct": take_profit_pct_value,
         }
+        if roll_setup:
+            self.paper_roll_setups.pop(symbol, None)
         schedule_background_task(self._send_dingtalk_trade_alert("模拟开仓", self.paper_positions[symbol]))
+
+    def _paper_roll_setup_for(self, row: dict[str, Any], side: str, latest_price: float) -> dict[str, Any] | None:
+        config = self.config
+        setup = self.paper_roll_setups.get(row["symbol"])
+        if not setup:
+            return None
+        now = time.time()
+        if now - setup["createdAt"] > config.paper_roll_window_minutes * 60:
+            self.paper_roll_setups.pop(row["symbol"], None)
+            return None
+        if setup["side"] != side or setup["rollCount"] >= config.paper_max_roll_entries:
+            self.paper_roll_setups.pop(row["symbol"], None)
+            return None
+        if row["oiChange5m"] is None or row["volumeMultiple5m"] is None:
+            return None
+        if row["oiChange5m"] < config.oi_5m_threshold or row["volumeMultiple5m"] < config.volume_multiple_threshold:
+            return None
+        price_5m = float(row["priceChange5m"] or 0)
+        exit_price = float(setup["exitPrice"])
+        if side == "long":
+            pullback_pct = ((exit_price - latest_price) / exit_price) * 100
+            momentum_ok = latest_price > exit_price and price_5m > 0
+            pullback_ok = config.paper_pullback_min_pct <= pullback_pct <= config.paper_pullback_max_pct and price_5m > 0
+        else:
+            pullback_pct = ((latest_price - exit_price) / exit_price) * 100
+            momentum_ok = latest_price < exit_price and price_5m < 0
+            pullback_ok = config.paper_pullback_min_pct <= pullback_pct <= config.paper_pullback_max_pct and price_5m < 0
+        if pullback_ok:
+            return {
+                "mode": "回踩滚仓",
+                "riskFactor": config.paper_pullback_roll_risk_factor,
+                "nextRollCount": setup["rollCount"] + 1,
+            }
+        if momentum_ok:
+            return {
+                "mode": "动量滚仓",
+                "riskFactor": config.paper_momentum_roll_risk_factor,
+                "nextRollCount": setup["rollCount"] + 1,
+            }
+        return None
 
     def _maybe_close_paper_position(self, position: dict[str, Any], row: dict[str, Any]) -> None:
         config = self.config
@@ -515,10 +576,12 @@ class BinanceMonitor:
         side_mult = 1 if position["side"] == "long" else -1
         return_pct = ((latest_price - position["entryPrice"]) / position["entryPrice"]) * side_mult * 100
         age_minutes = (time.time() - position["entryAt"]) / 60
+        stop_loss_pct = float(position.get("stopLossPct", config.paper_stop_loss_pct))
+        take_profit_pct = float(position.get("takeProfitPct", config.paper_take_profit_pct))
         reason = None
-        if return_pct <= -config.paper_stop_loss_pct:
+        if return_pct <= -stop_loss_pct:
             reason = "止损"
-        elif return_pct >= config.paper_take_profit_pct:
+        elif return_pct >= take_profit_pct:
             reason = "止盈"
         elif age_minutes >= config.paper_max_hold_minutes:
             reason = "超时"
@@ -547,10 +610,25 @@ class BinanceMonitor:
         }
         self.paper_trades.appendleft(trade)
         self.paper_positions.pop(position["symbol"], None)
+        self._update_paper_reentry_state(position, exit_price, reason)
+        schedule_background_task(self._send_dingtalk_trade_alert("模拟平仓", trade))
+
+    def _update_paper_reentry_state(self, position: dict[str, Any], exit_price: float, reason: str) -> None:
+        symbol = position["symbol"]
+        self.paper_roll_setups.pop(symbol, None)
+        if reason == "止盈" and position.get("rollCount", 0) < self.config.paper_max_roll_entries:
+            self.paper_cooldowns.pop(symbol, None)
+            self.paper_roll_setups[symbol] = {
+                "symbol": symbol,
+                "side": position["side"],
+                "exitPrice": exit_price,
+                "createdAt": time.time(),
+                "rollCount": int(position.get("rollCount", 0)),
+            }
+            return
         cooldown_seconds = self.config.paper_reentry_cooldown_minutes * 60
         if cooldown_seconds > 0:
-            self.paper_cooldowns[position["symbol"]] = time.time() + cooldown_seconds
-        schedule_background_task(self._send_dingtalk_trade_alert("模拟平仓", trade))
+            self.paper_cooldowns[symbol] = time.time() + cooldown_seconds
 
     def _paper_snapshot(self) -> dict[str, Any]:
         row_map = {row["symbol"]: row for row in self.rows}
@@ -606,6 +684,7 @@ class BinanceMonitor:
         self.paper_positions.clear()
         self.paper_trades.clear()
         self.paper_cooldowns.clear()
+        self.paper_roll_setups.clear()
         self.paper_equity_high = self.config.paper_start_balance
         self.paper_max_drawdown_pct = 0.0
 
@@ -783,6 +862,7 @@ def build_dingtalk_trade_payload(action: str, trade: dict[str, Any]) -> dict[str
     lines = [
         f"## {title}",
         f"- 模式：模拟交易",
+        f"- 入场类型：{trade.get('entryType', '首仓')}",
         f"- 方向：{side_text}",
         f"- 入场价：{format_price(trade['entryPrice'])}",
         f"- 名义金额：{format_money(trade['notional'])} USDT",

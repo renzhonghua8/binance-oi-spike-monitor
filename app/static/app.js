@@ -144,7 +144,7 @@ function renderPaper() {
     .map((position) => `
       <tr>
         <td class="symbol">${position.symbol}</td>
-        <td><span class="badge ${position.side === "long" ? "long" : "short"}">${position.side === "long" ? "做多" : "做空"}</span></td>
+        <td><span class="badge ${position.side === "long" ? "long" : "short"}">${position.side === "long" ? "做多" : "做空"}</span> ${position.entryType || ""}</td>
         <td>${price(position.entryPrice)}</td>
         <td>${price(position.latestPrice)}</td>
         <td>${price(position.stopPrice)}</td>
@@ -161,7 +161,7 @@ function renderPaper() {
       <tr>
         <td>${trade.exitTime}</td>
         <td class="symbol">${trade.symbol}</td>
-        <td><span class="badge ${trade.side === "long" ? "long" : "short"}">${trade.side === "long" ? "做多" : "做空"}</span></td>
+        <td><span class="badge ${trade.side === "long" ? "long" : "short"}">${trade.side === "long" ? "做多" : "做空"}</span> ${trade.entryType || ""}</td>
         <td>${price(trade.entryPrice)}</td>
         <td>${price(trade.exitPrice)}</td>
         <td>${trade.exitReason}</td>
