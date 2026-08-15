@@ -5,6 +5,7 @@ import os
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ DINGTALK_WEBHOOK = os.getenv(
     "",
 )
 DINGTALK_KEYWORD = "异动"
+DISPLAY_TZ = timezone(timedelta(hours=8))
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
@@ -1064,15 +1066,15 @@ def safe_num(value: float | None) -> float:
 
 
 def iso_now() -> str:
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    return iso_at(time.time())
 
 
 def iso_at(ts: float) -> str:
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+    return datetime.fromtimestamp(ts, UTC).astimezone(DISPLAY_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def local_day() -> str:
-    return time.strftime("%Y-%m-%d", time.localtime())
+    return datetime.now(UTC).astimezone(DISPLAY_TZ).strftime("%Y-%m-%d")
 
 
 def repeat_signal_level(count: int) -> str:
