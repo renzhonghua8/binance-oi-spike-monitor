@@ -101,7 +101,7 @@
       <section class="paper">
         <div class="sectionHead">
           <h2>模拟交易</h2>
-          <span>只用强方向信号开仓，固定止损/止盈，结果仅用于验证策略</span>
+          <span>山寨币默认 2% 止损 / 4% 止盈 / 45 分钟超时，结果仅用于验证策略</span>
           <button class="smallBtn" id="resetPaper">重置模拟</button>
         </div>
         <div class="paperStats">
@@ -113,24 +113,29 @@
           <div><span>最大回撤</span><strong id="paperDrawdown">0%</strong></div>
         </div>
         <div class="paperTables">
-          <div class="tableWrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>symbol</th>
-                  <th>方向</th>
-                  <th>入场</th>
-                  <th>现价</th>
-                  <th>止损</th>
-                  <th>止盈</th>
-                  <th>浮盈亏</th>
-                  <th>年龄</th>
-                </tr>
-              </thead>
-              <tbody id="paperPositions"></tbody>
-            </table>
+          <div class="paperPanel positionsPanel">
+            <div class="miniHead">当前持仓</div>
+            <div class="tableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>symbol</th>
+                    <th>方向</th>
+                    <th>入场</th>
+                    <th>现价</th>
+                    <th>止损</th>
+                    <th>止盈</th>
+                    <th>浮盈亏</th>
+                    <th>年龄</th>
+                  </tr>
+                </thead>
+                <tbody id="paperPositions"></tbody>
+              </table>
+            </div>
           </div>
-          <div class="tableWrap">
+          <div class="paperPanel tradesPanel">
+            <div class="miniHead">已平仓记录</div>
+            <div class="tableWrap">
             <table>
               <thead>
                 <tr>
@@ -145,6 +150,7 @@
               </thead>
               <tbody id="paperTrades"></tbody>
             </table>
+            </div>
           </div>
         </div>
       </section>

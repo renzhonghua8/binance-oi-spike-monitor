@@ -39,9 +39,9 @@ class MonitorConfig(BaseModel):
     paper_enabled: bool = True
     paper_start_balance: float = Field(default=10_000, ge=100)
     paper_risk_pct: float = Field(default=1.0, ge=0.1, le=10)
-    paper_stop_loss_pct: float = Field(default=1.2, ge=0.1, le=20)
-    paper_take_profit_pct: float = Field(default=2.4, ge=0.1, le=50)
-    paper_max_hold_minutes: int = Field(default=30, ge=1, le=240)
+    paper_stop_loss_pct: float = Field(default=2.0, ge=0.1, le=20)
+    paper_take_profit_pct: float = Field(default=4.0, ge=0.1, le=50)
+    paper_max_hold_minutes: int = Field(default=45, ge=1, le=240)
     paper_max_open_positions: int = Field(default=5, ge=1, le=30)
     paper_max_leverage: float = Field(default=3.0, ge=1, le=20)
     paper_fee_rate_pct: float = Field(default=0.05, ge=0, le=1)

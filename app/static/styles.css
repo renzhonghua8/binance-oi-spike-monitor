@@ -25,7 +25,7 @@ body {
 }
 
 .app {
-  width: min(1520px, calc(100vw - 32px));
+  width: min(1680px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 24px 0 36px;
 }
@@ -320,8 +320,29 @@ td b {
 
 .paperTables {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 10px;
+}
+
+.paperPanel {
+  min-width: 0;
+}
+
+.positionsPanel {
+  max-height: 240px;
+  overflow: auto;
+}
+
+.tradesPanel {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.miniHead {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .sectionHead {
