@@ -74,7 +74,7 @@ p {
 
 .controls {
   display: grid;
-  grid-template-columns: 112px 1.2fr repeat(9, 1fr) 92px;
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
   gap: 10px;
   align-items: end;
   padding: 14px;

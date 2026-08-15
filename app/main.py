@@ -56,9 +56,9 @@ class MonitorConfig(BaseModel):
     paper_breakeven_trigger_pct: float = Field(default=2.0, ge=0.1, le=20)
     paper_trailing_trigger_pct: float = Field(default=3.0, ge=0.1, le=30)
     paper_trailing_protect_ratio: float = Field(default=0.5, ge=0.1, le=0.95)
-    paper_daily_loss_limit_pct: float = Field(default=2.0, ge=0.1, le=20)
-    paper_max_consecutive_losses: int = Field(default=3, ge=1, le=20)
-    paper_loss_pause_minutes: int = Field(default=180, ge=1, le=1440)
+    paper_daily_loss_limit_pct: float = Field(default=10.0, ge=0.1, le=50)
+    paper_max_consecutive_losses: int = Field(default=5, ge=1, le=20)
+    paper_loss_pause_minutes: int = Field(default=240, ge=1, le=1440)
 
 
 @dataclass

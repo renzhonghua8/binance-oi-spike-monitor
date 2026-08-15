@@ -19,6 +19,9 @@ const fields = {
   klineTopSymbols: document.querySelector("#klineTopSymbols"),
   minVolume: document.querySelector("#minVolume"),
   refreshSeconds: document.querySelector("#refreshSeconds"),
+  dailyLossLimit: document.querySelector("#dailyLossLimit"),
+  maxLossStreak: document.querySelector("#maxLossStreak"),
+  lossPauseMinutes: document.querySelector("#lossPauseMinutes"),
 };
 
 const rowsEl = document.querySelector("#rows");
@@ -46,6 +49,9 @@ function applySnapshot(snapshot) {
   fields.klineTopSymbols.value = config.kline_top_symbols;
   fields.minVolume.value = config.min_24h_quote_volume;
   fields.refreshSeconds.value = config.refresh_seconds;
+  fields.dailyLossLimit.value = config.paper_daily_loss_limit_pct;
+  fields.maxLossStreak.value = config.paper_max_consecutive_losses;
+  fields.lossPauseMinutes.value = config.paper_loss_pause_minutes;
   fields.topSymbols.disabled = fields.monitorAll.checked;
   setStatus(status.ok, status.message);
   document.querySelector("#tracked").textContent = status.tracked || 0;
@@ -285,6 +291,9 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
     kline_top_symbols: Number(fields.klineTopSymbols.value),
     min_24h_quote_volume: Number(fields.minVolume.value),
     refresh_seconds: Number(fields.refreshSeconds.value),
+    paper_daily_loss_limit_pct: Number(fields.dailyLossLimit.value),
+    paper_max_consecutive_losses: Number(fields.maxLossStreak.value),
+    paper_loss_pause_minutes: Number(fields.lossPauseMinutes.value),
   };
   await fetch("/api/config", {
     method: "POST",
