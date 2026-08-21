@@ -76,6 +76,34 @@
           <span>暂停时间 分钟</span>
           <input id="lossPauseMinutes" type="number" min="1" max="1440" step="10" />
         </label>
+        <label class="toggle">
+          <span>API交易</span>
+          <input id="apiTradingEnabled" type="checkbox" />
+        </label>
+        <label class="toggle">
+          <span>Testnet</span>
+          <input id="apiTradingTestnet" type="checkbox" />
+        </label>
+        <label class="toggle">
+          <span>允许做多</span>
+          <input id="apiLongEnabled" type="checkbox" />
+        </label>
+        <label class="toggle">
+          <span>允许做空</span>
+          <input id="apiShortEnabled" type="checkbox" />
+        </label>
+        <label>
+          <span>API单笔名义 USDT</span>
+          <input id="apiMaxNotional" type="number" min="5" max="10000" step="5" />
+        </label>
+        <label>
+          <span>API最大持仓</span>
+          <input id="apiMaxOpen" type="number" min="1" max="10" step="1" />
+        </label>
+        <label>
+          <span>API杠杆</span>
+          <input id="apiLeverage" type="number" min="1" max="20" step="1" />
+        </label>
         <button id="saveConfig">保存</button>
       </section>
 
@@ -107,6 +135,60 @@
         <div>
           <span>钉钉告警</span>
           <strong id="alertStatus">-</strong>
+        </div>
+      </section>
+
+      <section class="paper">
+        <div class="sectionHead">
+          <h2>API交易</h2>
+          <span>默认 testnet；主网需要服务器确认变量，真实订单会同步钉钉</span>
+        </div>
+        <div class="paperStats">
+          <div><span>模式</span><strong id="apiMode">-</strong></div>
+          <div><span>状态</span><strong id="apiStatus">-</strong></div>
+          <div><span>API Key</span><strong id="apiKeys">-</strong></div>
+          <div><span>真实持仓</span><strong id="apiOpen">0</strong></div>
+          <div><span>已平仓</span><strong id="apiClosed">0</strong></div>
+        </div>
+        <div class="paperTables">
+          <div class="paperPanel positionsPanel">
+            <div class="miniHead">API当前持仓</div>
+            <div class="tableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>symbol</th>
+                    <th>方向</th>
+                    <th>入场</th>
+                    <th>数量</th>
+                    <th>止损</th>
+                    <th>止盈</th>
+                    <th>年龄</th>
+                  </tr>
+                </thead>
+                <tbody id="apiPositions"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="paperPanel tradesPanel">
+            <div class="miniHead">API平仓记录</div>
+            <div class="tableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>symbol</th>
+                    <th>方向</th>
+                    <th>入场</th>
+                    <th>出场</th>
+                    <th>原因</th>
+                    <th>盈亏</th>
+                  </tr>
+                </thead>
+                <tbody id="apiTrades"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
 

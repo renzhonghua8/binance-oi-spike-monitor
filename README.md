@@ -15,6 +15,7 @@
 - 后端通过 SSE 向页面实时推送数据
 - 显示每行数据年龄，强信号默认只使用新鲜 OI 数据
 - 非“观察”信号触发后推送到钉钉群机器人，消息包含关键词“异动”
+- 可选接入 Binance USD-M Futures API，下单记录同步推送钉钉；默认关闭，默认 testnet
 
 ## 启动
 
@@ -38,6 +39,8 @@ docker run -d \
   --restart unless-stopped \
   -p 8000:8000 \
   -e DINGTALK_WEBHOOK="https://oapi.dingtalk.com/robot/send?access_token=你的access_token" \
+  -e BINANCE_API_KEY="你的testnet或主网API Key" \
+  -e BINANCE_API_SECRET="你的testnet或主网API Secret" \
   binance-oi-spike-monitor
 ```
 
@@ -68,6 +71,40 @@ http://127.0.0.1:8000
 ```
 
 页面、钉钉告警、模拟交易记录时间统一按 UTC+8 显示。
+
+## API 交易测试
+
+程序支持 Binance USD-M Futures API 交易，默认关闭，页面顶部打开 `API交易` 后才会下单。默认使用 Futures Testnet。
+
+环境变量：
+
+```bash
+export BINANCE_API_KEY="你的API Key"
+export BINANCE_API_SECRET="你的API Secret"
+```
+
+主网真实交易需要额外设置确认变量，否则即使页面关闭 Testnet 也不会下单：
+
+```bash
+export BINANCE_LIVE_TRADING_CONFIRM="I_UNDERSTAND_REAL_MONEY"
+```
+
+页面可设置：
+
+- API交易：开启后按同一套策略真实下单
+- Testnet：默认开启；关闭后才会尝试主网
+- 允许做多 / 允许做空：默认只允许做多，做空默认关闭
+- API单笔名义 USDT：默认 20 USDT
+- API最大持仓：默认最多 1 个真实持仓
+- API杠杆：默认 1x
+
+API 交易当前使用市价单开仓/平仓，止损、止盈、移动止损、反向信号、超时由程序监控后触发市价平仓。开仓和平仓都会推送到钉钉。
+
+重要限制：
+
+- API 持仓记录当前保存在程序内存中，重启程序后不会自动恢复交易所已有仓位。
+- 因此测试阶段建议只用 testnet，或主网极小资金，并在重启服务前先手动确认交易所没有未管理仓位。
+- API Key 禁止开启提现权限，建议绑定服务器 IP 白名单。
 
 ## 配置
 
@@ -175,7 +212,7 @@ http://127.0.0.1:8000
 
 ## 实盘交易切换计划
 
-当前版本只做模拟交易，不会下真实订单。后续可以接入 Binance Futures API，把同一套策略引擎从 `paper` 模式切换到 `live` 模式，但必须满足以下条件：
+当前版本已支持 API 交易测试，但建议按 `testnet -> 主网极小资金 -> 小资金稳定验证` 逐步推进。必须满足以下条件：
 
 - API Key 只开启 Futures 交易权限
 - 禁止提现权限

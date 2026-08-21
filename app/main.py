@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import math
 import os
@@ -6,8 +8,10 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import FastAPI
@@ -17,6 +21,10 @@ from pydantic import BaseModel, Field
 
 
 BINANCE_FAPI = "https://fapi.binance.com"
+BINANCE_TESTNET_FAPI = "https://demo-fapi.binance.com"
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+BINANCE_LIVE_TRADING_CONFIRM = os.getenv("BINANCE_LIVE_TRADING_CONFIRM", "")
 DINGTALK_WEBHOOK = os.getenv(
     "DINGTALK_WEBHOOK",
     "",
@@ -61,6 +69,13 @@ class MonitorConfig(BaseModel):
     paper_daily_loss_limit_pct: float = Field(default=10.0, ge=0.1, le=50)
     paper_max_consecutive_losses: int = Field(default=5, ge=1, le=20)
     paper_loss_pause_minutes: int = Field(default=240, ge=1, le=1440)
+    api_trading_enabled: bool = False
+    api_trading_testnet: bool = True
+    api_trading_long_enabled: bool = True
+    api_trading_short_enabled: bool = False
+    api_max_notional_per_trade: float = Field(default=20.0, ge=5, le=10_000)
+    api_max_open_positions: int = Field(default=1, ge=1, le=10)
+    api_leverage: int = Field(default=1, ge=1, le=20)
 
 
 @dataclass
@@ -82,6 +97,7 @@ class BinanceMonitor:
         self.rows: list[dict[str, Any]] = []
         self.signal_events: deque[dict[str, Any]] = deque(maxlen=500)
         self.alert_events: deque[dict[str, Any]] = deque(maxlen=200)
+        self.symbol_specs: dict[str, dict[str, Any]] = {}
         self.paper_balance = self.config.paper_start_balance
         self.paper_positions: dict[str, dict[str, Any]] = {}
         self.paper_trades: deque[dict[str, Any]] = deque(maxlen=500)
@@ -93,6 +109,17 @@ class BinanceMonitor:
         self.paper_day_start_balance = self.config.paper_start_balance
         self.paper_consecutive_losses = 0
         self.paper_pause_until = 0.0
+        self.api_positions: dict[str, dict[str, Any]] = {}
+        self.api_trades: deque[dict[str, Any]] = deque(maxlen=200)
+        self.api_cooldowns: dict[str, float] = {}
+        self.api_roll_setups: dict[str, dict[str, Any]] = {}
+        self.api_status: dict[str, Any] = {
+            "enabled": False,
+            "ready": False,
+            "mode": "testnet",
+            "message": "未开启",
+            "updatedAt": None,
+        }
         self.status: dict[str, Any] = {
             "ok": False,
             "message": "warming up",
@@ -123,6 +150,7 @@ class BinanceMonitor:
                 "signals": list(self.signal_events),
                 "alerts": list(self.alert_events),
                 "paper": self._paper_snapshot(),
+                "api": self._api_snapshot(),
             }
 
     async def _run_loop(self) -> None:
@@ -165,6 +193,7 @@ class BinanceMonitor:
 
             now_iso = iso_now()
             self._update_paper_trading(rows)
+            await self._update_api_trading(rows)
             async with self._lock:
                 self.rows = sorted(
                     rows,
@@ -215,6 +244,11 @@ class BinanceMonitor:
             if item.get("contractType") == "PERPETUAL"
             and item.get("quoteAsset") == "USDT"
             and item.get("status") == "TRADING"
+        }
+        self.symbol_specs = {
+            item["symbol"]: symbol_spec_from_exchange_info(item)
+            for item in exchange_info.get("symbols", [])
+            if item.get("symbol") in allowed
         }
         async with self._lock:
             config = self.config
@@ -828,6 +862,285 @@ class BinanceMonitor:
         self.paper_consecutive_losses = 0
         self.paper_pause_until = 0.0
 
+    async def _update_api_trading(self, rows: list[dict[str, Any]]) -> None:
+        config = self.config
+        if not config.api_trading_enabled:
+            self.api_status = self._api_status("未开启", enabled=False)
+            return
+        ready_error = self._api_ready_error()
+        if ready_error:
+            self.api_status = self._api_status(ready_error, ready=False)
+            return
+        row_map = {row["symbol"]: row for row in rows}
+        for symbol, position in list(self.api_positions.items()):
+            row = row_map.get(symbol)
+            if row is None:
+                continue
+            await self._maybe_close_api_position(position, row)
+        for row in rows:
+            await self._maybe_open_api_position(row)
+        self.api_status = self._api_status("运行中", ready=True)
+
+    def _api_ready_error(self) -> str | None:
+        if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+            return "缺少 BINANCE_API_KEY / BINANCE_API_SECRET"
+        if not self.config.api_trading_testnet and BINANCE_LIVE_TRADING_CONFIRM != "I_UNDERSTAND_REAL_MONEY":
+            return "主网交易未确认"
+        return None
+
+    def _api_status(self, message: str, enabled: bool | None = None, ready: bool = False) -> dict[str, Any]:
+        return {
+            "enabled": self.config.api_trading_enabled if enabled is None else enabled,
+            "ready": ready,
+            "mode": "testnet" if self.config.api_trading_testnet else "live",
+            "message": message,
+            "updatedAt": iso_now(),
+        }
+
+    async def _maybe_open_api_position(self, row: dict[str, Any]) -> None:
+        config = self.config
+        symbol = row["symbol"]
+        side = paper_side_from_signal(row["signalDirection"])
+        if side is None:
+            return
+        if side == "long" and not config.api_trading_long_enabled:
+            return
+        if side == "short" and not config.api_trading_short_enabled:
+            return
+        if symbol in self.api_positions:
+            return
+        if self._paper_opening_paused():
+            return
+        if time.time() < self.api_cooldowns.get(symbol, 0):
+            return
+        if len(self.api_positions) >= config.api_max_open_positions:
+            return
+        if not row["isStrongSignal"] or row["isStale"]:
+            return
+        latest_price = float(row["latestPrice"])
+        if latest_price <= 0:
+            return
+        had_roll_setup = symbol in self.api_roll_setups
+        roll_setup = self._api_roll_setup_for(row, side, latest_price)
+        if had_roll_setup and not roll_setup and symbol in self.api_roll_setups:
+            return
+        risk_factor = roll_setup["riskFactor"] if roll_setup else 1.0
+        stop_loss_pct_value = config.paper_roll_stop_loss_pct if roll_setup else config.paper_stop_loss_pct
+        take_profit_pct_value = config.paper_take_profit_pct
+        notional = config.api_max_notional_per_trade * risk_factor
+        qty_text = self._api_quantity(symbol, notional / latest_price)
+        if qty_text is None:
+            self.api_status = self._api_status(f"{symbol} 数量低于交易所最小值", ready=True)
+            return
+        order_side = "BUY" if side == "long" else "SELL"
+        try:
+            await self._api_set_leverage(symbol)
+            order = await self._api_signed_request(
+                "POST",
+                "/fapi/v1/order",
+                {
+                    "symbol": symbol,
+                    "side": order_side,
+                    "type": "MARKET",
+                    "quantity": qty_text,
+                    "newOrderRespType": "RESULT",
+                },
+            )
+        except Exception as exc:
+            self.api_status = self._api_status(f"{symbol} 开仓失败: {type(exc).__name__}: {exc}", ready=True)
+            return
+        entry_price = api_order_price(order, latest_price)
+        qty = float(qty_text)
+        if side == "long":
+            stop_price = entry_price * (1 - stop_loss_pct_value / 100)
+            take_profit_price = entry_price * (1 + take_profit_pct_value / 100)
+        else:
+            stop_price = entry_price * (1 + stop_loss_pct_value / 100)
+            take_profit_price = entry_price * (1 - take_profit_pct_value / 100)
+        position = {
+            "mode": "API交易-testnet" if config.api_trading_testnet else "API交易-主网",
+            "symbol": symbol,
+            "side": side,
+            "entryPrice": entry_price,
+            "qty": qty,
+            "notional": qty * entry_price,
+            "stopPrice": stop_price,
+            "initialStopPrice": stop_price,
+            "takeProfitPrice": take_profit_price,
+            "entryAt": time.time(),
+            "entryTime": iso_now(),
+            "signalDirection": row["signalDirection"],
+            "signalStrength": row["signalStrength"],
+            "entryType": roll_setup["mode"] if roll_setup else "首仓",
+            "rollCount": roll_setup["nextRollCount"] if roll_setup else 0,
+            "stopLossPct": stop_loss_pct_value,
+            "takeProfitPct": take_profit_pct_value,
+            "bestReturnPct": 0.0,
+            "trailingStopActive": False,
+            "order": order,
+        }
+        self.api_positions[symbol] = position
+        if roll_setup:
+            self.api_roll_setups.pop(symbol, None)
+        schedule_background_task(self._send_dingtalk_trade_alert("API开仓", position))
+
+    def _api_roll_setup_for(self, row: dict[str, Any], side: str, latest_price: float) -> dict[str, Any] | None:
+        config = self.config
+        setup = self.api_roll_setups.get(row["symbol"])
+        if not setup:
+            return None
+        now = time.time()
+        if now - setup["createdAt"] > config.paper_roll_window_minutes * 60:
+            self.api_roll_setups.pop(row["symbol"], None)
+            return None
+        if setup["side"] != side or setup["rollCount"] >= config.paper_max_roll_entries:
+            self.api_roll_setups.pop(row["symbol"], None)
+            return None
+        if row["oiChange5m"] is None or row["volumeMultiple5m"] is None:
+            return None
+        if row["oiChange5m"] < config.oi_5m_threshold or row["volumeMultiple5m"] < config.volume_multiple_threshold:
+            return None
+        price_5m = float(row["priceChange5m"] or 0)
+        exit_price = float(setup["exitPrice"])
+        if side == "long":
+            pullback_pct = ((exit_price - latest_price) / exit_price) * 100
+            momentum_ok = latest_price > exit_price and price_5m > 0
+            pullback_ok = config.paper_pullback_min_pct <= pullback_pct <= config.paper_pullback_max_pct and price_5m > 0
+        else:
+            pullback_pct = ((latest_price - exit_price) / exit_price) * 100
+            momentum_ok = latest_price < exit_price and price_5m < 0
+            pullback_ok = config.paper_pullback_min_pct <= pullback_pct <= config.paper_pullback_max_pct and price_5m < 0
+        if pullback_ok:
+            return {"mode": "回踩滚仓", "riskFactor": config.paper_pullback_roll_risk_factor, "nextRollCount": setup["rollCount"] + 1}
+        if momentum_ok:
+            return {"mode": "动量滚仓", "riskFactor": config.paper_momentum_roll_risk_factor, "nextRollCount": setup["rollCount"] + 1}
+        return None
+
+    async def _maybe_close_api_position(self, position: dict[str, Any], row: dict[str, Any]) -> None:
+        latest_price = float(row["latestPrice"])
+        side_mult = 1 if position["side"] == "long" else -1
+        return_pct = ((latest_price - position["entryPrice"]) / position["entryPrice"]) * side_mult * 100
+        self._update_paper_trailing_stop(position, latest_price, return_pct)
+        age_minutes = (time.time() - position["entryAt"]) / 60
+        stop_loss_pct = float(position.get("stopLossPct", self.config.paper_stop_loss_pct))
+        take_profit_pct = float(position.get("takeProfitPct", self.config.paper_take_profit_pct))
+        reason = None
+        if self._paper_stop_hit(position, latest_price):
+            reason = "移动止损" if position.get("trailingStopActive") else "止损"
+        elif return_pct <= -stop_loss_pct:
+            reason = "止损"
+        elif return_pct >= take_profit_pct:
+            reason = "止盈"
+        elif age_minutes >= self.config.paper_max_hold_minutes:
+            reason = "超时"
+        else:
+            new_side = paper_side_from_signal(row["signalDirection"])
+            if new_side and new_side != position["side"] and row["isStrongSignal"]:
+                reason = "反向信号"
+        if reason:
+            await self._close_api_position(position, latest_price, reason)
+
+    async def _close_api_position(self, position: dict[str, Any], latest_price: float, reason: str) -> None:
+        symbol = position["symbol"]
+        order_side = "SELL" if position["side"] == "long" else "BUY"
+        qty_text = self._api_quantity(symbol, float(position["qty"]))
+        if qty_text is None:
+            self.api_status = self._api_status(f"{symbol} 平仓数量无效", ready=True)
+            return
+        try:
+            order = await self._api_signed_request(
+                "POST",
+                "/fapi/v1/order",
+                {
+                    "symbol": symbol,
+                    "side": order_side,
+                    "type": "MARKET",
+                    "quantity": qty_text,
+                    "reduceOnly": "true",
+                    "newOrderRespType": "RESULT",
+                },
+            )
+        except Exception as exc:
+            self.api_status = self._api_status(f"{symbol} 平仓失败: {type(exc).__name__}: {exc}", ready=True)
+            return
+        exit_price = api_order_price(order, latest_price)
+        side_mult = 1 if position["side"] == "long" else -1
+        gross_pnl = position["notional"] * ((exit_price - position["entryPrice"]) / position["entryPrice"]) * side_mult
+        trade = {
+            **position,
+            "exitPrice": exit_price,
+            "exitTime": iso_now(),
+            "exitReason": reason,
+            "grossPnl": gross_pnl,
+            "fee": 0.0,
+            "pnl": gross_pnl,
+            "pnlPct": (gross_pnl / position["notional"]) * 100 if position["notional"] else 0,
+            "closeOrder": order,
+        }
+        self.api_trades.appendleft(trade)
+        self.api_positions.pop(symbol, None)
+        self._update_api_reentry_state(position, exit_price, reason)
+        schedule_background_task(self._send_dingtalk_trade_alert("API平仓", trade))
+
+    def _update_api_reentry_state(self, position: dict[str, Any], exit_price: float, reason: str) -> None:
+        symbol = position["symbol"]
+        self.api_roll_setups.pop(symbol, None)
+        if reason == "止盈" and position.get("rollCount", 0) < self.config.paper_max_roll_entries:
+            self.api_cooldowns.pop(symbol, None)
+            self.api_roll_setups[symbol] = {
+                "symbol": symbol,
+                "side": position["side"],
+                "exitPrice": exit_price,
+                "createdAt": time.time(),
+                "rollCount": int(position.get("rollCount", 0)),
+            }
+            return
+        cooldown_seconds = self.config.paper_reentry_cooldown_minutes * 60
+        if cooldown_seconds > 0:
+            self.api_cooldowns[symbol] = time.time() + cooldown_seconds
+
+    async def _api_set_leverage(self, symbol: str) -> None:
+        await self._api_signed_request("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": self.config.api_leverage})
+
+    async def _api_signed_request(self, method: str, path: str, params: dict[str, Any]) -> Any:
+        base_url = BINANCE_TESTNET_FAPI if self.config.api_trading_testnet else BINANCE_FAPI
+        signed_params = {**params, "timestamp": int(time.time() * 1000), "recvWindow": 5000}
+        query = urlencode(signed_params)
+        signature = hmac.new(BINANCE_API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
+        headers = {"X-MBX-APIKEY": BINANCE_API_KEY, "Content-Type": "application/x-www-form-urlencoded"}
+        timeout = httpx.Timeout(12.0, connect=5.0)
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+            if method == "POST":
+                response = await client.post(f"{base_url}{path}", content=f"{query}&signature={signature}")
+            else:
+                response = await client.get(f"{base_url}{path}?{query}&signature={signature}")
+            response.raise_for_status()
+            return response.json()
+
+    def _api_quantity(self, symbol: str, qty: float) -> str | None:
+        spec = self.symbol_specs.get(symbol, {})
+        step_size = Decimal(str(spec.get("stepSize") or "0.001"))
+        min_qty = Decimal(str(spec.get("minQty") or "0"))
+        raw_qty = Decimal(str(qty))
+        if step_size <= 0:
+            return str(raw_qty)
+        steps = (raw_qty / step_size).to_integral_value(rounding=ROUND_DOWN)
+        final_qty = steps * step_size
+        if final_qty <= 0 or final_qty < min_qty:
+            return None
+        return format(final_qty.normalize(), "f")
+
+    def _api_snapshot(self) -> dict[str, Any]:
+        return {
+            **self.api_status,
+            "hasKeys": bool(BINANCE_API_KEY and BINANCE_API_SECRET),
+            "liveConfirmed": BINANCE_LIVE_TRADING_CONFIRM == "I_UNDERSTAND_REAL_MONEY",
+            "openCount": len(self.api_positions),
+            "closedCount": len(self.api_trades),
+            "positions": list(self.api_positions.values()),
+            "trades": list(self.api_trades)[:100],
+        }
+
     async def _send_dingtalk_alert(self, event: dict[str, Any]) -> None:
         if not DINGTALK_WEBHOOK:
             return
@@ -1001,7 +1314,7 @@ def build_dingtalk_trade_payload(action: str, trade: dict[str, Any]) -> dict[str
     title = f"{DINGTALK_KEYWORD} {action} {trade['symbol']} {side_text}"
     lines = [
         f"## {title}",
-        f"- 模式：模拟交易",
+        f"- 模式：{trade.get('mode', '模拟交易')}",
         f"- 入场类型：{trade.get('entryType', '首仓')}",
         f"- 方向：{side_text}",
         f"- 入场价：{format_price(trade['entryPrice'])}",
@@ -1012,7 +1325,7 @@ def build_dingtalk_trade_payload(action: str, trade: dict[str, Any]) -> dict[str
         f"- 入场时间：{trade['entryTime']}",
         f"- 信号：{trade['signalDirection']} / 强度 {trade['signalStrength']}",
     ]
-    if action == "模拟平仓":
+    if action.endswith("平仓"):
         lines.extend(
             [
                 f"- 出场价：{format_price(trade['exitPrice'])}",
@@ -1057,6 +1370,23 @@ def format_money(value: float | None) -> str:
     if value >= 1_000_000:
         return f"{value / 1_000_000:.1f}M"
     return f"{value:.0f}"
+
+
+def symbol_spec_from_exchange_info(item: dict[str, Any]) -> dict[str, Any]:
+    filters = {flt.get("filterType"): flt for flt in item.get("filters", [])}
+    lot_filter = filters.get("MARKET_LOT_SIZE") or filters.get("LOT_SIZE") or {}
+    return {
+        "stepSize": lot_filter.get("stepSize", "0.001"),
+        "minQty": lot_filter.get("minQty", "0"),
+    }
+
+
+def api_order_price(order: dict[str, Any], fallback_price: float) -> float:
+    for key in ("avgPrice", "price"):
+        value = float(order.get(key) or 0)
+        if value > 0:
+            return value
+    return fallback_price
 
 
 def safe_num(value: float | None) -> float:

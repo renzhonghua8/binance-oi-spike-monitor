@@ -3,6 +3,7 @@ const state = {
   signals: [],
   alerts: [],
   paper: null,
+  api: null,
   sortKey: "signalStrength",
   sortDir: "desc",
   search: "",
@@ -22,6 +23,13 @@ const fields = {
   dailyLossLimit: document.querySelector("#dailyLossLimit"),
   maxLossStreak: document.querySelector("#maxLossStreak"),
   lossPauseMinutes: document.querySelector("#lossPauseMinutes"),
+  apiTradingEnabled: document.querySelector("#apiTradingEnabled"),
+  apiTradingTestnet: document.querySelector("#apiTradingTestnet"),
+  apiLongEnabled: document.querySelector("#apiLongEnabled"),
+  apiShortEnabled: document.querySelector("#apiShortEnabled"),
+  apiMaxNotional: document.querySelector("#apiMaxNotional"),
+  apiMaxOpen: document.querySelector("#apiMaxOpen"),
+  apiLeverage: document.querySelector("#apiLeverage"),
 };
 
 const rowsEl = document.querySelector("#rows");
@@ -34,11 +42,12 @@ function initStream() {
 }
 
 function applySnapshot(snapshot) {
-  const { config, status, rows, signals, alerts, paper } = snapshot;
+  const { config, status, rows, signals, alerts, paper, api } = snapshot;
   state.rows = rows || [];
   state.signals = signals || [];
   state.alerts = alerts || [];
   state.paper = paper || null;
+  state.api = api || null;
   fields.monitorAll.checked = Boolean(config.monitor_all);
   fields.topSymbols.value = config.top_symbols;
   fields.oiThreshold.value = config.oi_5m_threshold;
@@ -52,6 +61,13 @@ function applySnapshot(snapshot) {
   fields.dailyLossLimit.value = config.paper_daily_loss_limit_pct;
   fields.maxLossStreak.value = config.paper_max_consecutive_losses;
   fields.lossPauseMinutes.value = config.paper_loss_pause_minutes;
+  fields.apiTradingEnabled.checked = Boolean(config.api_trading_enabled);
+  fields.apiTradingTestnet.checked = Boolean(config.api_trading_testnet);
+  fields.apiLongEnabled.checked = Boolean(config.api_trading_long_enabled);
+  fields.apiShortEnabled.checked = Boolean(config.api_trading_short_enabled);
+  fields.apiMaxNotional.value = config.api_max_notional_per_trade;
+  fields.apiMaxOpen.value = config.api_max_open_positions;
+  fields.apiLeverage.value = config.api_leverage;
   fields.topSymbols.disabled = fields.monitorAll.checked;
   setStatus(status.ok, status.message);
   document.querySelector("#tracked").textContent = status.tracked || 0;
@@ -66,6 +82,7 @@ function applySnapshot(snapshot) {
     : "待触发";
   renderRows();
   renderSignals();
+  renderApi();
   renderPaper();
 }
 
@@ -169,6 +186,47 @@ function renderPaper() {
     .join("");
 
   document.querySelector("#paperTrades").innerHTML = paper.trades
+    .slice(0, 30)
+    .map((trade) => `
+      <tr>
+        <td>${trade.exitTime}</td>
+        <td class="symbol">${trade.symbol}</td>
+        <td><span class="badge ${trade.side === "long" ? "long" : "short"}">${trade.side === "long" ? "做多" : "做空"}</span> ${trade.entryType || ""}</td>
+        <td>${price(trade.entryPrice)}</td>
+        <td>${price(trade.exitPrice)}</td>
+        <td>${trade.exitReason}</td>
+        <td class="${trade.pnl >= 0 ? "up" : "down"}">${moneyFull(trade.pnl)} (${trade.pnlPct.toFixed(2)}%)</td>
+      </tr>
+    `)
+    .join("");
+}
+
+function renderApi() {
+  const api = state.api;
+  if (!api) return;
+  document.querySelector("#apiMode").textContent = api.mode === "testnet" ? "Testnet" : "主网";
+  document.querySelector("#apiStatus").textContent = `${api.enabled ? api.message : "未开启"}`;
+  document.querySelector("#apiStatus").className = api.ready ? "up" : api.enabled ? "down" : "";
+  document.querySelector("#apiKeys").textContent = api.hasKeys ? "已配置" : "未配置";
+  document.querySelector("#apiKeys").className = api.hasKeys ? "up" : "down";
+  document.querySelector("#apiOpen").textContent = api.openCount || 0;
+  document.querySelector("#apiClosed").textContent = api.closedCount || 0;
+
+  document.querySelector("#apiPositions").innerHTML = (api.positions || [])
+    .map((position) => `
+      <tr>
+        <td class="symbol">${position.symbol}</td>
+        <td><span class="badge ${position.side === "long" ? "long" : "short"}">${position.side === "long" ? "做多" : "做空"}</span> ${position.entryType || ""}</td>
+        <td>${price(position.entryPrice)}</td>
+        <td>${Number(position.qty).toFixed(6)}</td>
+        <td>${price(position.stopPrice)}</td>
+        <td>${price(position.takeProfitPrice)}</td>
+        <td>${((Date.now() / 1000 - position.entryAt) / 60).toFixed(1)}m</td>
+      </tr>
+    `)
+    .join("");
+
+  document.querySelector("#apiTrades").innerHTML = (api.trades || [])
     .slice(0, 30)
     .map((trade) => `
       <tr>
@@ -294,6 +352,13 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
     paper_daily_loss_limit_pct: Number(fields.dailyLossLimit.value),
     paper_max_consecutive_losses: Number(fields.maxLossStreak.value),
     paper_loss_pause_minutes: Number(fields.lossPauseMinutes.value),
+    api_trading_enabled: fields.apiTradingEnabled.checked,
+    api_trading_testnet: fields.apiTradingTestnet.checked,
+    api_trading_long_enabled: fields.apiLongEnabled.checked,
+    api_trading_short_enabled: fields.apiShortEnabled.checked,
+    api_max_notional_per_trade: Number(fields.apiMaxNotional.value),
+    api_max_open_positions: Number(fields.apiMaxOpen.value),
+    api_leverage: Number(fields.apiLeverage.value),
   };
   await fetch("/api/config", {
     method: "POST",
