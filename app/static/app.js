@@ -7,6 +7,7 @@ const state = {
   sortKey: "signalStrength",
   sortDir: "desc",
   search: "",
+  configReady: false,
   settingsDirty: false,
   dirtyFieldIds: new Set(),
   saving: false,
@@ -52,10 +53,11 @@ function applySnapshot(snapshot) {
   state.alerts = alerts || [];
   state.paper = paper || null;
   state.api = api || null;
-  if (!state.saving) {
+  if (!state.saving && (!state.configReady || !state.settingsDirty)) {
     syncConfigFields(config);
+    state.configReady = true;
   }
-  fields.topSymbols.disabled = fields.monitorAll.checked;
+  syncDependentSettingState();
   setStatus(status.ok, status.message);
   document.querySelector("#tracked").textContent = status.tracked || 0;
   document.querySelector("#highlighted").textContent = state.rows.filter((row) => row.isHighlighted).length;
@@ -95,7 +97,7 @@ function syncConfigFields(config) {
   syncValue(fields.apiMaxNotional, config.api_max_notional_per_trade);
   syncValue(fields.apiMaxOpen, config.api_max_open_positions);
   syncValue(fields.apiLeverage, config.api_leverage);
-  fields.topSymbols.disabled = fields.monitorAll.checked;
+  syncDependentSettingState();
 }
 
 function fieldIsLocked(field) {
@@ -115,7 +117,12 @@ function markSettingDirty(target) {
   if (!target.closest(".settings")) return;
   state.settingsDirty = true;
   state.dirtyFieldIds.add(target.id);
+  syncDependentSettingState();
   setSaveStatus("有未保存修改，请点击保存设置", "warningTextInline");
+}
+
+function syncDependentSettingState() {
+  fields.topSymbols.disabled = fields.monitorAll.checked;
 }
 
 function setSaveStatus(text, className = "") {
@@ -451,7 +458,7 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
 });
 
 fields.monitorAll.addEventListener("change", () => {
-  fields.topSymbols.disabled = fields.monitorAll.checked;
+  syncDependentSettingState();
 });
 
 document.querySelector("#resetPaper").addEventListener("click", async () => {
