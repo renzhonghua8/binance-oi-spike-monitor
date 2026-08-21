@@ -8,6 +8,7 @@ const state = {
   sortDir: "desc",
   search: "",
   settingsDirty: false,
+  dirtyFieldIds: new Set(),
   saving: false,
 };
 
@@ -51,7 +52,7 @@ function applySnapshot(snapshot) {
   state.alerts = alerts || [];
   state.paper = paper || null;
   state.api = api || null;
-  if (!state.settingsDirty && !state.saving) {
+  if (!state.saving) {
     syncConfigFields(config);
   }
   fields.topSymbols.disabled = fields.monitorAll.checked;
@@ -74,27 +75,47 @@ function applySnapshot(snapshot) {
 }
 
 function syncConfigFields(config) {
-  fields.monitorAll.checked = Boolean(config.monitor_all);
-  fields.topSymbols.value = config.top_symbols;
-  fields.oiThreshold.value = config.oi_5m_threshold;
-  fields.volumeThreshold.value = config.volume_multiple_threshold;
-  fields.strengthThreshold.value = config.signal_strength_threshold;
-  fields.maxAge.value = config.max_data_age_seconds;
-  fields.seedTopSymbols.value = config.seed_top_symbols;
-  fields.klineTopSymbols.value = config.kline_top_symbols;
-  fields.minVolume.value = config.min_24h_quote_volume;
-  fields.refreshSeconds.value = config.refresh_seconds;
-  fields.dailyLossLimit.value = config.paper_daily_loss_limit_pct;
-  fields.maxLossStreak.value = config.paper_max_consecutive_losses;
-  fields.lossPauseMinutes.value = config.paper_loss_pause_minutes;
-  fields.apiTradingEnabled.checked = Boolean(config.api_trading_enabled);
-  fields.apiTradingTestnet.checked = Boolean(config.api_trading_testnet);
-  fields.apiLongEnabled.checked = Boolean(config.api_trading_long_enabled);
-  fields.apiShortEnabled.checked = Boolean(config.api_trading_short_enabled);
-  fields.apiMaxNotional.value = config.api_max_notional_per_trade;
-  fields.apiMaxOpen.value = config.api_max_open_positions;
-  fields.apiLeverage.value = config.api_leverage;
+  syncChecked(fields.monitorAll, Boolean(config.monitor_all));
+  syncValue(fields.topSymbols, config.top_symbols);
+  syncValue(fields.oiThreshold, config.oi_5m_threshold);
+  syncValue(fields.volumeThreshold, config.volume_multiple_threshold);
+  syncValue(fields.strengthThreshold, config.signal_strength_threshold);
+  syncValue(fields.maxAge, config.max_data_age_seconds);
+  syncValue(fields.seedTopSymbols, config.seed_top_symbols);
+  syncValue(fields.klineTopSymbols, config.kline_top_symbols);
+  syncValue(fields.minVolume, config.min_24h_quote_volume);
+  syncValue(fields.refreshSeconds, config.refresh_seconds);
+  syncValue(fields.dailyLossLimit, config.paper_daily_loss_limit_pct);
+  syncValue(fields.maxLossStreak, config.paper_max_consecutive_losses);
+  syncValue(fields.lossPauseMinutes, config.paper_loss_pause_minutes);
+  syncChecked(fields.apiTradingEnabled, Boolean(config.api_trading_enabled));
+  syncChecked(fields.apiTradingTestnet, Boolean(config.api_trading_testnet));
+  syncChecked(fields.apiLongEnabled, Boolean(config.api_trading_long_enabled));
+  syncChecked(fields.apiShortEnabled, Boolean(config.api_trading_short_enabled));
+  syncValue(fields.apiMaxNotional, config.api_max_notional_per_trade);
+  syncValue(fields.apiMaxOpen, config.api_max_open_positions);
+  syncValue(fields.apiLeverage, config.api_leverage);
   fields.topSymbols.disabled = fields.monitorAll.checked;
+}
+
+function fieldIsLocked(field) {
+  return state.dirtyFieldIds.has(field.id) || document.activeElement === field;
+}
+
+function syncValue(field, value) {
+  if (!fieldIsLocked(field)) field.value = value;
+}
+
+function syncChecked(field, value) {
+  if (!fieldIsLocked(field)) field.checked = value;
+}
+
+function markSettingDirty(target) {
+  if (!target || !target.id || target.id === "adminKey") return;
+  if (!target.closest(".settings")) return;
+  state.settingsDirty = true;
+  state.dirtyFieldIds.add(target.id);
+  setSaveStatus("有未保存修改，请点击保存设置", "warningTextInline");
 }
 
 function setSaveStatus(text, className = "") {
@@ -363,16 +384,12 @@ document.querySelectorAll("th[data-sort]").forEach((th) => {
   });
 });
 
-document.querySelector(".settings").addEventListener("input", (event) => {
-  if (event.target.id === "adminKey") return;
-  state.settingsDirty = true;
-  setSaveStatus("有未保存修改", "warningTextInline");
-});
-
-document.querySelector(".settings").addEventListener("change", (event) => {
-  if (event.target.id === "adminKey") return;
-  state.settingsDirty = true;
-  setSaveStatus("有未保存修改", "warningTextInline");
+["pointerdown", "keydown", "input", "change"].forEach((eventName) => {
+  document.querySelector(".settings").addEventListener(
+    eventName,
+    (event) => markSettingDirty(event.target),
+    true,
+  );
 });
 
 document.querySelector("#saveConfig").addEventListener("click", async () => {
@@ -419,6 +436,7 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
   }
   const snapshot = await response.json();
   state.settingsDirty = false;
+  state.dirtyFieldIds.clear();
   state.saving = false;
   if (snapshot.config) {
     syncConfigFields(snapshot.config);
