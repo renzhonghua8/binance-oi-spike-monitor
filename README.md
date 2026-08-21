@@ -30,19 +30,61 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 ## Docker 部署
 
+推荐把钉钉、Binance API、操作密钥写到服务器本地 `.env` 文件里，Docker 启动时统一读取。`.env` 已加入 `.gitignore`，不要提交到 GitHub。
+
 ```bash
 git clone https://github.com/renzhonghua8/binance-oi-spike-monitor.git
 cd binance-oi-spike-monitor
+cp .env.example .env
+vi .env
+```
+
+填写 `.env`：
+
+```bash
+DINGTALK_WEBHOOK=https://oapi.dingtalk.com/robot/send?access_token=你的access_token
+BINANCE_API_KEY=你的testnet或主网API Key
+BINANCE_API_SECRET=你的testnet或主网API Secret
+ADMIN_ACTION_KEY=用于修改API交易设置的操作密钥
+BINANCE_LIVE_TRADING_CONFIRM=
+```
+
+启动：
+
+```bash
 docker build -t binance-oi-spike-monitor .
 docker run -d \
   --name binance-oi-spike-monitor \
   --restart unless-stopped \
   -p 8000:8000 \
-  -e DINGTALK_WEBHOOK="https://oapi.dingtalk.com/robot/send?access_token=你的access_token" \
-  -e BINANCE_API_KEY="你的testnet或主网API Key" \
-  -e BINANCE_API_SECRET="你的testnet或主网API Secret" \
-  -e ADMIN_ACTION_KEY="用于修改API交易设置的操作密钥" \
+  --env-file .env \
   binance-oi-spike-monitor
+```
+
+更新代码后重新部署：
+
+```bash
+cd ~/binance-oi-spike-monitor
+git pull
+docker rm -f binance-oi-spike-monitor 2>/dev/null
+docker build --no-cache -t binance-oi-spike-monitor .
+docker run -d \
+  --name binance-oi-spike-monitor \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  --env-file .env \
+  binance-oi-spike-monitor
+```
+
+检查容器是否读到配置：
+
+```bash
+docker exec binance-oi-spike-monitor sh -lc '
+test -n "$DINGTALK_WEBHOOK" && echo "钉钉: 已配置" || echo "钉钉: 未配置"
+test -n "$BINANCE_API_KEY" && echo "API Key: 已配置" || echo "API Key: 未配置"
+test -n "$BINANCE_API_SECRET" && echo "API Secret: 已配置" || echo "API Secret: 未配置"
+test -n "$ADMIN_ACTION_KEY" && echo "操作密钥: 已配置" || echo "操作密钥: 未配置"
+'
 ```
 
 查看日志：
@@ -84,6 +126,8 @@ export BINANCE_API_KEY="你的API Key"
 export BINANCE_API_SECRET="你的API Secret"
 export ADMIN_ACTION_KEY="用于修改API交易设置的操作密钥"
 ```
+
+如果使用 Docker 部署，优先把这些值写入服务器本地 `.env`，然后用 `docker run --env-file .env ...` 启动，不需要每次手动 `export`。
 
 主网真实交易需要额外设置确认变量，否则即使页面关闭 Testnet 也不会下单：
 
