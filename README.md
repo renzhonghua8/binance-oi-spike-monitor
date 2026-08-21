@@ -41,6 +41,7 @@ docker run -d \
   -e DINGTALK_WEBHOOK="https://oapi.dingtalk.com/robot/send?access_token=你的access_token" \
   -e BINANCE_API_KEY="你的testnet或主网API Key" \
   -e BINANCE_API_SECRET="你的testnet或主网API Secret" \
+  -e ADMIN_ACTION_KEY="用于修改API交易设置的操作密钥" \
   binance-oi-spike-monitor
 ```
 
@@ -81,6 +82,7 @@ http://127.0.0.1:8000
 ```bash
 export BINANCE_API_KEY="你的API Key"
 export BINANCE_API_SECRET="你的API Secret"
+export ADMIN_ACTION_KEY="用于修改API交易设置的操作密钥"
 ```
 
 主网真实交易需要额外设置确认变量，否则即使页面关闭 Testnet 也不会下单：
@@ -97,6 +99,7 @@ export BINANCE_LIVE_TRADING_CONFIRM="I_UNDERSTAND_REAL_MONEY"
 - API单笔名义 USDT：默认 20 USDT
 - API最大持仓：默认最多 1 个真实持仓
 - API杠杆：默认 1x
+- 操作密钥：修改 API交易、Testnet、允许方向、单笔金额、最大持仓、杠杆时必须输入。服务器未设置 `ADMIN_ACTION_KEY` 时不会启用这层保护。
 
 API 交易当前使用市价单开仓/平仓，止损、止盈、移动止损、反向信号、超时由程序监控后触发市价平仓。开仓和平仓都会推送到钉钉。
 

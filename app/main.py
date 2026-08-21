@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -25,6 +25,7 @@ BINANCE_TESTNET_FAPI = "https://demo-fapi.binance.com"
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 BINANCE_LIVE_TRADING_CONFIRM = os.getenv("BINANCE_LIVE_TRADING_CONFIRM", "")
+ADMIN_ACTION_KEY = os.getenv("ADMIN_ACTION_KEY", "")
 DINGTALK_WEBHOOK = os.getenv(
     "DINGTALK_WEBHOOK",
     "",
@@ -1135,6 +1136,7 @@ class BinanceMonitor:
             **self.api_status,
             "hasKeys": bool(BINANCE_API_KEY and BINANCE_API_SECRET),
             "liveConfirmed": BINANCE_LIVE_TRADING_CONFIRM == "I_UNDERSTAND_REAL_MONEY",
+            "adminKeyProtected": bool(ADMIN_ACTION_KEY),
             "openCount": len(self.api_positions),
             "closedCount": len(self.api_trades),
             "positions": list(self.api_positions.values()),
@@ -1389,6 +1391,25 @@ def api_order_price(order: dict[str, Any], fallback_price: float) -> float:
     return fallback_price
 
 
+def api_config_changed(old_config: MonitorConfig, new_config: MonitorConfig) -> bool:
+    api_fields = {
+        "api_trading_enabled",
+        "api_trading_testnet",
+        "api_trading_long_enabled",
+        "api_trading_short_enabled",
+        "api_max_notional_per_trade",
+        "api_max_open_positions",
+        "api_leverage",
+    }
+    return any(getattr(old_config, field) != getattr(new_config, field) for field in api_fields)
+
+
+def admin_key_valid(admin_key: str) -> bool:
+    if not ADMIN_ACTION_KEY:
+        return True
+    return hmac.compare_digest(admin_key, ADMIN_ACTION_KEY)
+
+
 def safe_num(value: float | None) -> float:
     if value is None or math.isnan(value):
         return 0.0
@@ -1453,7 +1474,11 @@ async def api_get_config() -> dict[str, Any]:
 
 
 @app.post("/api/config")
-async def api_set_config(config: MonitorConfig) -> dict[str, Any]:
+async def api_set_config(payload: dict[str, Any]) -> dict[str, Any]:
+    admin_key = str(payload.pop("admin_key", ""))
+    config = MonitorConfig(**payload)
+    if api_config_changed(monitor.config, config) and not admin_key_valid(admin_key):
+        raise HTTPException(status_code=403, detail="修改 API 真实交易配置需要输入正确操作密钥")
     await monitor.update_config(config)
     return await monitor.snapshot()
 

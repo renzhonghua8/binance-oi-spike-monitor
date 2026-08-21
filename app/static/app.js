@@ -30,6 +30,7 @@ const fields = {
   apiMaxNotional: document.querySelector("#apiMaxNotional"),
   apiMaxOpen: document.querySelector("#apiMaxOpen"),
   apiLeverage: document.querySelector("#apiLeverage"),
+  adminKey: document.querySelector("#adminKey"),
 };
 
 const rowsEl = document.querySelector("#rows");
@@ -84,6 +85,7 @@ function applySnapshot(snapshot) {
   renderSignals();
   renderApi();
   renderPaper();
+  renderAdminHint();
 }
 
 function setStatus(ok, message) {
@@ -242,6 +244,15 @@ function renderApi() {
     .join("");
 }
 
+function renderAdminHint() {
+  const hint = document.querySelector("#adminKeyHint");
+  if (!hint || !state.api) return;
+  hint.textContent = state.api.adminKeyProtected
+    ? "API真实交易参数受操作密钥保护；修改 API交易、Testnet、方向、金额、持仓、杠杆时必须输入操作密钥。"
+    : "服务器未设置 ADMIN_ACTION_KEY，API真实交易参数暂未启用操作密钥保护。";
+  hint.className = state.api.adminKeyProtected ? "dangerText" : "warningText";
+}
+
 function renderPaperStats(selector, stats) {
   document.querySelector(selector).innerHTML = stats
     .slice(0, 8)
@@ -338,6 +349,7 @@ document.querySelectorAll("th[data-sort]").forEach((th) => {
 });
 
 document.querySelector("#saveConfig").addEventListener("click", async () => {
+  const saveButton = document.querySelector("#saveConfig");
   const payload = {
     monitor_all: fields.monitorAll.checked,
     top_symbols: Number(fields.topSymbols.value),
@@ -359,12 +371,25 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
     api_max_notional_per_trade: Number(fields.apiMaxNotional.value),
     api_max_open_positions: Number(fields.apiMaxOpen.value),
     api_leverage: Number(fields.apiLeverage.value),
+    admin_key: fields.adminKey.value,
   };
-  await fetch("/api/config", {
+  saveButton.textContent = "保存中";
+  const response = await fetch("/api/config", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    alert(error.detail || "保存失败");
+    saveButton.textContent = "保存设置";
+    return;
+  }
+  fields.adminKey.value = "";
+  saveButton.textContent = "已保存";
+  setTimeout(() => {
+    saveButton.textContent = "保存设置";
+  }, 1200);
 });
 
 fields.monitorAll.addEventListener("change", () => {

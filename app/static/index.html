@@ -19,92 +19,124 @@
         </div>
       </header>
 
-      <section class="controls">
-        <label class="toggle">
-          <span>全部合约</span>
-          <input id="monitorAll" type="checkbox" />
-        </label>
-        <label>
-          <span>搜索</span>
-          <input id="search" type="search" placeholder="BTC / ETH / SOL" />
-        </label>
-        <label>
-          <span>监控数量 高流动性模式</span>
-          <input id="topSymbols" type="number" min="5" max="500" step="5" />
-        </label>
-        <label>
-          <span>OI 5m阈值 %</span>
-          <input id="oiThreshold" type="number" min="0" step="0.1" />
-        </label>
-        <label>
-          <span>成交量倍数</span>
-          <input id="volumeThreshold" type="number" min="0" step="0.1" />
-        </label>
-        <label>
-          <span>强信号分数</span>
-          <input id="strengthThreshold" type="number" min="0" max="100" step="1" />
-        </label>
-        <label>
-          <span>最大数据年龄 秒</span>
-          <input id="maxAge" type="number" min="30" max="300" step="5" />
-        </label>
-        <label>
-          <span>启动回填数量</span>
-          <input id="seedTopSymbols" type="number" min="0" max="500" step="10" />
-        </label>
-        <label>
-          <span>K线量倍数数量</span>
-          <input id="klineTopSymbols" type="number" min="0" max="500" step="10" />
-        </label>
-        <label>
-          <span>最低24h成交额 USDT</span>
-          <input id="minVolume" type="number" min="0" step="1000000" />
-        </label>
-        <label>
-          <span>刷新秒数</span>
-          <input id="refreshSeconds" type="number" min="15" max="180" step="1" />
-        </label>
-        <label>
-          <span>今日亏损停机 %</span>
-          <input id="dailyLossLimit" type="number" min="0.1" max="50" step="0.1" />
-        </label>
-        <label>
-          <span>连续亏损暂停 笔</span>
-          <input id="maxLossStreak" type="number" min="1" max="20" step="1" />
-        </label>
-        <label>
-          <span>暂停时间 分钟</span>
-          <input id="lossPauseMinutes" type="number" min="1" max="1440" step="10" />
-        </label>
-        <label class="toggle">
-          <span>API交易</span>
-          <input id="apiTradingEnabled" type="checkbox" />
-        </label>
-        <label class="toggle">
-          <span>Testnet</span>
-          <input id="apiTradingTestnet" type="checkbox" />
-        </label>
-        <label class="toggle">
-          <span>允许做多</span>
-          <input id="apiLongEnabled" type="checkbox" />
-        </label>
-        <label class="toggle">
-          <span>允许做空</span>
-          <input id="apiShortEnabled" type="checkbox" />
-        </label>
-        <label>
-          <span>API单笔名义 USDT</span>
-          <input id="apiMaxNotional" type="number" min="5" max="10000" step="5" />
-        </label>
-        <label>
-          <span>API最大持仓</span>
-          <input id="apiMaxOpen" type="number" min="1" max="10" step="1" />
-        </label>
-        <label>
-          <span>API杠杆</span>
-          <input id="apiLeverage" type="number" min="1" max="20" step="1" />
-        </label>
-        <button id="saveConfig">保存</button>
+      <section class="settings">
+        <div class="settingsHead">
+          <h2>监控与交易设置</h2>
+          <button id="saveConfig">保存设置</button>
+        </div>
+        <div class="settingGroup">
+          <div class="groupCopy">
+            <h3>信号筛选</h3>
+            <p>只影响异动榜、信号记录和策略触发条件，不会直接下单。</p>
+          </div>
+          <div class="controls">
+            <label class="toggle">
+              <span>扫描全部合约</span>
+              <input id="monitorAll" type="checkbox" />
+            </label>
+            <label>
+              <span>搜索币种</span>
+              <input id="search" type="search" placeholder="BTC / ETH / SOL" />
+            </label>
+            <label>
+              <span>高流动性扫描数量</span>
+              <input id="topSymbols" type="number" min="5" max="500" step="5" />
+            </label>
+            <label>
+              <span>开仓所需 5m OI 增长 %</span>
+              <input id="oiThreshold" type="number" min="0" step="0.1" />
+            </label>
+            <label>
+              <span>开仓所需 5m 成交量倍数</span>
+              <input id="volumeThreshold" type="number" min="0" step="0.1" />
+            </label>
+            <label>
+              <span>强信号最低分数</span>
+              <input id="strengthThreshold" type="number" min="0" max="100" step="1" />
+            </label>
+            <label>
+              <span>数据过期秒数</span>
+              <input id="maxAge" type="number" min="30" max="300" step="5" />
+            </label>
+            <label>
+              <span>启动历史回填数量</span>
+              <input id="seedTopSymbols" type="number" min="0" max="500" step="10" />
+            </label>
+            <label>
+              <span>计算量倍数的K线数量</span>
+              <input id="klineTopSymbols" type="number" min="0" max="500" step="10" />
+            </label>
+            <label>
+              <span>最低24h成交额 USDT</span>
+              <input id="minVolume" type="number" min="0" step="1000000" />
+            </label>
+            <label>
+              <span>刷新间隔 秒</span>
+              <input id="refreshSeconds" type="number" min="15" max="180" step="1" />
+            </label>
+          </div>
+        </div>
+        <div class="settingGroup">
+          <div class="groupCopy">
+            <h3>模拟风控</h3>
+            <p>控制模拟交易和 API 新开仓的停机保护；已有持仓仍会继续止盈止损。</p>
+          </div>
+          <div class="controls">
+            <label>
+              <span>今日亏损停机 %</span>
+              <input id="dailyLossLimit" type="number" min="0.1" max="50" step="0.1" />
+            </label>
+            <label>
+              <span>连续亏损暂停 笔</span>
+              <input id="maxLossStreak" type="number" min="1" max="20" step="1" />
+            </label>
+            <label>
+              <span>暂停时间 分钟</span>
+              <input id="lossPauseMinutes" type="number" min="1" max="1440" step="10" />
+            </label>
+          </div>
+        </div>
+        <div class="settingGroup apiDanger">
+          <div class="groupCopy">
+            <h3>API真实交易</h3>
+            <p>打开后会按策略向 Binance Futures 下市价单。默认 testnet；主网还需要服务器确认变量。</p>
+          </div>
+          <div class="controls">
+            <label class="toggle">
+              <span>开启API自动下单</span>
+              <input id="apiTradingEnabled" type="checkbox" />
+            </label>
+            <label class="toggle">
+              <span>使用Testnet测试网</span>
+              <input id="apiTradingTestnet" type="checkbox" />
+            </label>
+            <label class="toggle">
+              <span>允许API做多</span>
+              <input id="apiLongEnabled" type="checkbox" />
+            </label>
+            <label class="toggle">
+              <span>允许API做空</span>
+              <input id="apiShortEnabled" type="checkbox" />
+            </label>
+            <label>
+              <span>API每笔最大名义金额 USDT</span>
+              <input id="apiMaxNotional" type="number" min="5" max="10000" step="5" />
+            </label>
+            <label>
+              <span>API最多同时持仓</span>
+              <input id="apiMaxOpen" type="number" min="1" max="10" step="1" />
+            </label>
+            <label>
+              <span>API杠杆倍数</span>
+              <input id="apiLeverage" type="number" min="1" max="20" step="1" />
+            </label>
+            <label>
+              <span>操作密钥 修改API设置必填</span>
+              <input id="adminKey" type="password" autocomplete="off" placeholder="服务器 ADMIN_ACTION_KEY" />
+            </label>
+          </div>
+          <p class="dangerText" id="adminKeyHint">API交易参数受操作密钥保护；未输入正确密钥不能保存关键改动。</p>
+        </div>
       </section>
 
       <section class="summary">

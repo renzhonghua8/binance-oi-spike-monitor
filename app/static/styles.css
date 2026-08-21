@@ -72,16 +72,66 @@ p {
   box-shadow: 0 0 18px rgba(38, 208, 124, 0.7);
 }
 
-.controls {
+.settings {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
-  gap: 10px;
-  align-items: end;
+  gap: 12px;
   padding: 14px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
   margin-bottom: 12px;
+}
+
+.settingsHead,
+.settingGroup {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.settingsHead {
+  align-items: center;
+}
+
+.settingsHead h2,
+.groupCopy h3 {
+  margin: 0;
+}
+
+.groupCopy h3 {
+  font-size: 15px;
+}
+
+.groupCopy p,
+.dangerText,
+.warningText {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.apiDanger {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.dangerText {
+  grid-column: 2;
+  color: var(--red);
+}
+
+.warningText {
+  grid-column: 2;
+  color: var(--amber);
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+  gap: 10px;
+  align-items: end;
 }
 
 .toggle {
@@ -391,11 +441,18 @@ td b {
   }
 
   .controls,
+  .settingsHead,
+  .settingGroup,
   .summary,
   .paperStats,
   .paperStrategy,
   .paperTables {
     grid-template-columns: 1fr;
+  }
+
+  .dangerText,
+  .warningText {
+    grid-column: 1;
   }
 
   .tableWrap {
