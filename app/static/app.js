@@ -7,7 +7,6 @@ const state = {
   sortKey: "signalStrength",
   sortDir: "desc",
   search: "",
-  configReady: false,
   settingsDirty: false,
   dirtyFieldIds: new Set(),
   saving: false,
@@ -53,9 +52,8 @@ function applySnapshot(snapshot) {
   state.alerts = alerts || [];
   state.paper = paper || null;
   state.api = api || null;
-  if (!state.saving && (!state.configReady || !state.settingsDirty)) {
+  if (!state.saving && !state.settingsDirty) {
     syncConfigFields(config);
-    state.configReady = true;
   }
   syncDependentSettingState();
   setStatus(status.ok, status.message);
