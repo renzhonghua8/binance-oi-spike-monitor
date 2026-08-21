@@ -7,6 +7,8 @@ const state = {
   sortKey: "signalStrength",
   sortDir: "desc",
   search: "",
+  settingsDirty: false,
+  saving: false,
 };
 
 const fields = {
@@ -49,6 +51,29 @@ function applySnapshot(snapshot) {
   state.alerts = alerts || [];
   state.paper = paper || null;
   state.api = api || null;
+  if (!state.settingsDirty && !state.saving) {
+    syncConfigFields(config);
+  }
+  fields.topSymbols.disabled = fields.monitorAll.checked;
+  setStatus(status.ok, status.message);
+  document.querySelector("#tracked").textContent = status.tracked || 0;
+  document.querySelector("#highlighted").textContent = state.rows.filter((row) => row.isHighlighted).length;
+  document.querySelector("#strongSignals").textContent = state.rows.filter((row) => row.isStrongSignal).length;
+  document.querySelector("#directionSignals").textContent = state.signals.length;
+  document.querySelector("#staleRows").textContent = status.staleRows || 0;
+  document.querySelector("#updatedAt").textContent = status.updatedAt || "-";
+  const latestAlert = state.alerts[0];
+  document.querySelector("#alertStatus").textContent = latestAlert
+    ? `${latestAlert.ok ? "成功" : "失败"} ${latestAlert.symbol}`
+    : "待触发";
+  renderRows();
+  renderSignals();
+  renderApi();
+  renderPaper();
+  renderAdminHint();
+}
+
+function syncConfigFields(config) {
   fields.monitorAll.checked = Boolean(config.monitor_all);
   fields.topSymbols.value = config.top_symbols;
   fields.oiThreshold.value = config.oi_5m_threshold;
@@ -70,22 +95,12 @@ function applySnapshot(snapshot) {
   fields.apiMaxOpen.value = config.api_max_open_positions;
   fields.apiLeverage.value = config.api_leverage;
   fields.topSymbols.disabled = fields.monitorAll.checked;
-  setStatus(status.ok, status.message);
-  document.querySelector("#tracked").textContent = status.tracked || 0;
-  document.querySelector("#highlighted").textContent = state.rows.filter((row) => row.isHighlighted).length;
-  document.querySelector("#strongSignals").textContent = state.rows.filter((row) => row.isStrongSignal).length;
-  document.querySelector("#directionSignals").textContent = state.signals.length;
-  document.querySelector("#staleRows").textContent = status.staleRows || 0;
-  document.querySelector("#updatedAt").textContent = status.updatedAt || "-";
-  const latestAlert = state.alerts[0];
-  document.querySelector("#alertStatus").textContent = latestAlert
-    ? `${latestAlert.ok ? "成功" : "失败"} ${latestAlert.symbol}`
-    : "待触发";
-  renderRows();
-  renderSignals();
-  renderApi();
-  renderPaper();
-  renderAdminHint();
+}
+
+function setSaveStatus(text, className = "") {
+  const el = document.querySelector("#saveStatus");
+  el.textContent = text;
+  el.className = className;
 }
 
 function setStatus(ok, message) {
@@ -348,6 +363,18 @@ document.querySelectorAll("th[data-sort]").forEach((th) => {
   });
 });
 
+document.querySelector(".settings").addEventListener("input", (event) => {
+  if (event.target.id === "adminKey") return;
+  state.settingsDirty = true;
+  setSaveStatus("有未保存修改", "warningTextInline");
+});
+
+document.querySelector(".settings").addEventListener("change", (event) => {
+  if (event.target.id === "adminKey") return;
+  state.settingsDirty = true;
+  setSaveStatus("有未保存修改", "warningTextInline");
+});
+
 document.querySelector("#saveConfig").addEventListener("click", async () => {
   const saveButton = document.querySelector("#saveConfig");
   const payload = {
@@ -373,7 +400,9 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
     api_leverage: Number(fields.apiLeverage.value),
     admin_key: fields.adminKey.value,
   };
+  state.saving = true;
   saveButton.textContent = "保存中";
+  setSaveStatus("正在保存", "");
   const response = await fetch("/api/config", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -381,14 +410,25 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    alert(error.detail || "保存失败");
+    const message = error.detail || "保存失败";
+    alert(message);
+    setSaveStatus(message, "dangerTextInline");
     saveButton.textContent = "保存设置";
+    state.saving = false;
     return;
+  }
+  const snapshot = await response.json();
+  state.settingsDirty = false;
+  state.saving = false;
+  if (snapshot.config) {
+    syncConfigFields(snapshot.config);
   }
   fields.adminKey.value = "";
   saveButton.textContent = "已保存";
+  setSaveStatus("保存成功，配置已生效", "successTextInline");
   setTimeout(() => {
     saveButton.textContent = "保存设置";
+    if (!state.settingsDirty) setSaveStatus("实时同步中", "");
   }, 1200);
 });
 

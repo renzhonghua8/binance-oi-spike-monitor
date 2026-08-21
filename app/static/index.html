@@ -22,7 +22,10 @@
       <section class="settings">
         <div class="settingsHead">
           <h2>监控与交易设置</h2>
-          <button id="saveConfig">保存设置</button>
+          <div class="saveBox">
+            <button id="saveConfig">保存设置</button>
+            <span id="saveStatus">实时同步中</span>
+          </div>
         </div>
         <div class="settingGroup">
           <div class="groupCopy">
@@ -99,7 +102,7 @@
         <div class="settingGroup apiDanger">
           <div class="groupCopy">
             <h3>API真实交易</h3>
-            <p>打开后会按策略向 Binance Futures 下市价单。默认 testnet；主网还需要服务器确认变量。</p>
+            <p>开启API自动下单后，策略遇到强信号才会下单。允许做多/做空只是方向权限，不是手动下单按钮。</p>
           </div>
           <div class="controls">
             <label class="toggle">

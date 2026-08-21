@@ -94,6 +94,29 @@ p {
   align-items: center;
 }
 
+.saveBox {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#saveStatus {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.successTextInline {
+  color: var(--green) !important;
+}
+
+.warningTextInline {
+  color: var(--amber) !important;
+}
+
+.dangerTextInline {
+  color: var(--red) !important;
+}
+
 .settingsHead h2,
 .groupCopy h3 {
   margin: 0;

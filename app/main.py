@@ -866,7 +866,7 @@ class BinanceMonitor:
     async def _update_api_trading(self, rows: list[dict[str, Any]]) -> None:
         config = self.config
         if not config.api_trading_enabled:
-            self.api_status = self._api_status("未开启", enabled=False)
+            self.api_status = self._api_status("未开启，不会下单", enabled=False)
             return
         ready_error = self._api_ready_error()
         if ready_error:
