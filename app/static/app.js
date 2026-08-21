@@ -65,7 +65,7 @@ function applySnapshot(snapshot) {
   document.querySelector("#updatedAt").textContent = status.updatedAt || "-";
   const latestAlert = state.alerts[0];
   document.querySelector("#alertStatus").textContent = latestAlert
-    ? `${latestAlert.ok ? "成功" : "失败"} ${latestAlert.symbol}`
+    ? formatAlertStatus(latestAlert)
     : "待触发";
   renderRows();
   renderSignals();
@@ -132,6 +132,12 @@ function setSaveStatus(text, className = "") {
 function setStatus(ok, message) {
   statusEl.classList.toggle("ok", ok);
   statusEl.querySelector("span:last-child").textContent = message || (ok ? "live" : "等待数据");
+}
+
+function formatAlertStatus(alert) {
+  const result = `${alert.ok ? "成功" : "失败"} ${alert.symbol}`;
+  if (alert.ok) return result;
+  return `${result}：${alert.message || "未知原因"}`;
 }
 
 function renderRows() {
