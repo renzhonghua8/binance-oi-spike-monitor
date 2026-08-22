@@ -99,7 +99,7 @@ class MonitorConfig(BaseModel):
     api_trading_long_enabled: bool = env_bool("API_TRADING_LONG_ENABLED", True)
     api_trading_short_enabled: bool = env_bool("API_TRADING_SHORT_ENABLED", False)
     api_equity_risk_pct: float = Field(default=env_float("API_EQUITY_RISK_PCT", 1.0), ge=0.1, le=20)
-    api_max_notional_per_trade: float = Field(default=env_float("API_MAX_NOTIONAL_PER_TRADE", 20.0), ge=5, le=10_000)
+    api_max_notional_per_trade: float = Field(default=env_float("API_MAX_NOTIONAL_PER_TRADE", 0.0), ge=0, le=10_000)
     api_max_open_positions: int = Field(default=env_int("API_MAX_OPEN_POSITIONS", 1), ge=1, le=10)
     api_leverage: int = Field(default=env_int("API_LEVERAGE", 1), ge=1, le=20)
 
@@ -1006,7 +1006,9 @@ class BinanceMonitor:
             self.api_status = self._api_status(f"{symbol} 无法读取账户权益，暂不开仓", ready=True)
             return
         base_notional = equity * (config.api_equity_risk_pct / 100)
-        notional = min(base_notional * risk_factor, config.api_max_notional_per_trade)
+        notional = base_notional * risk_factor
+        if config.api_max_notional_per_trade > 0:
+            notional = min(notional, config.api_max_notional_per_trade)
         qty_text = self._api_quantity(symbol, notional / latest_price)
         if qty_text is None:
             self.api_status = self._api_status(f"{symbol} 数量低于交易所最小值", ready=True)

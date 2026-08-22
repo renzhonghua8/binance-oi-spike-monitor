@@ -305,7 +305,9 @@ function renderApi() {
   document.querySelector("#apiParamEnabled").className = settings.tradingEnabled ? "up" : "";
   document.querySelector("#apiParamSides").textContent = sides;
   document.querySelector("#apiParamRiskPct").textContent = settings.equityRiskPct === undefined ? "-" : `${settings.equityRiskPct}%`;
-  document.querySelector("#apiParamNotional").textContent = settings.maxNotionalPerTrade === undefined ? "-" : `${moneyFull(settings.maxNotionalPerTrade)} USDT`;
+  document.querySelector("#apiParamNotional").textContent = settings.maxNotionalPerTrade === undefined
+    ? "-"
+    : (settings.maxNotionalPerTrade > 0 ? `${moneyFull(settings.maxNotionalPerTrade)} USDT` : "不限制");
   document.querySelector("#apiParamMaxOpen").textContent = settings.maxOpenPositions === undefined ? "-" : settings.maxOpenPositions;
   document.querySelector("#apiParamLeverage").textContent = settings.leverage === undefined ? "-" : `${settings.leverage}x`;
   document.querySelector("#apiOpen").textContent = api.openCount || 0;
