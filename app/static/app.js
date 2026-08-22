@@ -43,10 +43,28 @@ const fields = {
   apiTradingTestnet: document.querySelector("#apiTradingTestnet"),
   apiLongEnabled: document.querySelector("#apiLongEnabled"),
   apiShortEnabled: document.querySelector("#apiShortEnabled"),
+  apiOiThreshold: document.querySelector("#apiOiThreshold"),
+  apiVolumeThreshold: document.querySelector("#apiVolumeThreshold"),
+  apiStrengthThreshold: document.querySelector("#apiStrengthThreshold"),
+  apiMaxAge: document.querySelector("#apiMaxAge"),
+  apiMinVolume: document.querySelector("#apiMinVolume"),
   apiEquityRiskPct: document.querySelector("#apiEquityRiskPct"),
   apiMaxNotional: document.querySelector("#apiMaxNotional"),
   apiMaxOpen: document.querySelector("#apiMaxOpen"),
   apiLeverage: document.querySelector("#apiLeverage"),
+  apiStopLossPct: document.querySelector("#apiStopLossPct"),
+  apiTakeProfitPct: document.querySelector("#apiTakeProfitPct"),
+  apiMaxHoldMinutes: document.querySelector("#apiMaxHoldMinutes"),
+  apiReentryCooldownMinutes: document.querySelector("#apiReentryCooldownMinutes"),
+  apiRollWindowMinutes: document.querySelector("#apiRollWindowMinutes"),
+  apiMaxRollEntries: document.querySelector("#apiMaxRollEntries"),
+  apiRollStopLossPct: document.querySelector("#apiRollStopLossPct"),
+  apiBreakevenTriggerPct: document.querySelector("#apiBreakevenTriggerPct"),
+  apiTrailingTriggerPct: document.querySelector("#apiTrailingTriggerPct"),
+  apiTrailingProtectRatio: document.querySelector("#apiTrailingProtectRatio"),
+  apiDailyLossLimit: document.querySelector("#apiDailyLossLimit"),
+  apiMaxLossStreak: document.querySelector("#apiMaxLossStreak"),
+  apiLossPauseMinutes: document.querySelector("#apiLossPauseMinutes"),
   apiKeyInput: document.querySelector("#apiKeyInput"),
   apiSecretInput: document.querySelector("#apiSecretInput"),
   apiLiveConfirm: document.querySelector("#apiLiveConfirm"),
@@ -131,10 +149,28 @@ function syncConfigFields(config) {
   syncChecked(fields.apiTradingTestnet, Boolean(config.api_trading_testnet));
   syncChecked(fields.apiLongEnabled, Boolean(config.api_trading_long_enabled));
   syncChecked(fields.apiShortEnabled, Boolean(config.api_trading_short_enabled));
+  syncValue(fields.apiOiThreshold, config.api_oi_5m_threshold);
+  syncValue(fields.apiVolumeThreshold, config.api_volume_multiple_threshold);
+  syncValue(fields.apiStrengthThreshold, config.api_signal_strength_threshold);
+  syncValue(fields.apiMaxAge, config.api_max_data_age_seconds);
+  syncValue(fields.apiMinVolume, config.api_min_24h_quote_volume);
   syncValue(fields.apiEquityRiskPct, config.api_equity_risk_pct);
   syncValue(fields.apiMaxNotional, config.api_max_notional_per_trade);
   syncValue(fields.apiMaxOpen, config.api_max_open_positions);
   syncValue(fields.apiLeverage, config.api_leverage);
+  syncValue(fields.apiStopLossPct, config.api_stop_loss_pct);
+  syncValue(fields.apiTakeProfitPct, config.api_take_profit_pct);
+  syncValue(fields.apiMaxHoldMinutes, config.api_max_hold_minutes);
+  syncValue(fields.apiReentryCooldownMinutes, config.api_reentry_cooldown_minutes);
+  syncValue(fields.apiRollWindowMinutes, config.api_roll_window_minutes);
+  syncValue(fields.apiMaxRollEntries, config.api_max_roll_entries);
+  syncValue(fields.apiRollStopLossPct, config.api_roll_stop_loss_pct);
+  syncValue(fields.apiBreakevenTriggerPct, config.api_breakeven_trigger_pct);
+  syncValue(fields.apiTrailingTriggerPct, config.api_trailing_trigger_pct);
+  syncValue(fields.apiTrailingProtectRatio, config.api_trailing_protect_ratio);
+  syncValue(fields.apiDailyLossLimit, config.api_daily_loss_limit_pct);
+  syncValue(fields.apiMaxLossStreak, config.api_max_consecutive_losses);
+  syncValue(fields.apiLossPauseMinutes, config.api_loss_pause_minutes);
   syncDependentSettingState();
 }
 
@@ -328,6 +364,11 @@ function renderApi() {
     : (settings.maxNotionalPerTrade > 0 ? `${moneyFull(settings.maxNotionalPerTrade)} USDT` : "不限制");
   document.querySelector("#apiParamMaxOpen").textContent = settings.maxOpenPositions === undefined ? "-" : settings.maxOpenPositions;
   document.querySelector("#apiParamLeverage").textContent = settings.leverage === undefined ? "-" : `${settings.leverage}x`;
+  document.querySelector("#apiSignalOi").textContent = settings.oi5mThreshold === undefined ? "-" : `${settings.oi5mThreshold}%`;
+  document.querySelector("#apiSignalVolume").textContent = settings.volumeMultipleThreshold === undefined ? "-" : `${settings.volumeMultipleThreshold}x`;
+  document.querySelector("#apiSignalStrength").textContent = settings.signalStrengthThreshold === undefined ? "-" : settings.signalStrengthThreshold;
+  document.querySelector("#apiSignalAge").textContent = settings.maxDataAgeSeconds === undefined ? "-" : `${settings.maxDataAgeSeconds}s`;
+  document.querySelector("#apiSignalMinVolume").textContent = settings.min24hQuoteVolume === undefined ? "-" : `${money(settings.min24hQuoteVolume)} USDT`;
   document.querySelector("#apiRiskStopLoss").textContent = settings.stopLossPct === undefined ? "-" : `${settings.stopLossPct}%`;
   document.querySelector("#apiRiskTakeProfit").textContent = settings.takeProfitPct === undefined ? "-" : `${settings.takeProfitPct}%`;
   document.querySelector("#apiRiskMaxHold").textContent = settings.maxHoldMinutes === undefined ? "-" : `${settings.maxHoldMinutes}m`;
@@ -337,6 +378,10 @@ function renderApi() {
   document.querySelector("#apiRiskProtectRatio").textContent = settings.trailingProtectRatio === undefined ? "-" : settings.trailingProtectRatio;
   document.querySelector("#apiRiskRolls").textContent = settings.maxRollEntries === undefined ? "-" : settings.maxRollEntries;
   document.querySelector("#apiRiskRollStop").textContent = settings.rollStopLossPct === undefined ? "-" : `${settings.rollStopLossPct}%`;
+  document.querySelector("#apiRiskDailyLoss").textContent = settings.dailyLossLimitPct === undefined ? "-" : `${settings.dailyLossLimitPct}% / ${moneyFull(settings.dailyPnl || 0)} (${Number(settings.dailyPnlPct || 0).toFixed(2)}%)`;
+  document.querySelector("#apiRiskLossStreak").textContent = settings.maxConsecutiveLosses === undefined ? "-" : `${settings.consecutiveLosses || 0}/${settings.maxConsecutiveLosses}`;
+  document.querySelector("#apiRiskPause").textContent = settings.pauseReason || "-";
+  document.querySelector("#apiRiskPause").className = settings.openingPaused ? "down" : "up";
   document.querySelector("#apiOpen").textContent = api.openCount || 0;
   document.querySelector("#apiExchangeOpen").textContent = (api.exchangePositions || []).length;
   document.querySelector("#apiClosed").textContent = api.closedCount || 0;
@@ -527,10 +572,28 @@ async function saveConfig(saveButton) {
     api_trading_testnet: fields.apiTradingTestnet.checked,
     api_trading_long_enabled: fields.apiLongEnabled.checked,
     api_trading_short_enabled: fields.apiShortEnabled.checked,
+    api_oi_5m_threshold: Number(fields.apiOiThreshold.value),
+    api_volume_multiple_threshold: Number(fields.apiVolumeThreshold.value),
+    api_signal_strength_threshold: Number(fields.apiStrengthThreshold.value),
+    api_max_data_age_seconds: Number(fields.apiMaxAge.value),
+    api_min_24h_quote_volume: Number(fields.apiMinVolume.value),
     api_equity_risk_pct: Number(fields.apiEquityRiskPct.value),
     api_max_notional_per_trade: Number(fields.apiMaxNotional.value),
     api_max_open_positions: Number(fields.apiMaxOpen.value),
     api_leverage: Number(fields.apiLeverage.value),
+    api_stop_loss_pct: Number(fields.apiStopLossPct.value),
+    api_take_profit_pct: Number(fields.apiTakeProfitPct.value),
+    api_max_hold_minutes: Number(fields.apiMaxHoldMinutes.value),
+    api_reentry_cooldown_minutes: Number(fields.apiReentryCooldownMinutes.value),
+    api_roll_window_minutes: Number(fields.apiRollWindowMinutes.value),
+    api_max_roll_entries: Number(fields.apiMaxRollEntries.value),
+    api_roll_stop_loss_pct: Number(fields.apiRollStopLossPct.value),
+    api_breakeven_trigger_pct: Number(fields.apiBreakevenTriggerPct.value),
+    api_trailing_trigger_pct: Number(fields.apiTrailingTriggerPct.value),
+    api_trailing_protect_ratio: Number(fields.apiTrailingProtectRatio.value),
+    api_daily_loss_limit_pct: Number(fields.apiDailyLossLimit.value),
+    api_max_consecutive_losses: Number(fields.apiMaxLossStreak.value),
+    api_loss_pause_minutes: Number(fields.apiLossPauseMinutes.value),
     binance_api_key: fields.apiKeyInput.value.trim(),
     binance_api_secret: fields.apiSecretInput.value.trim(),
     binance_live_trading_confirm: fields.apiLiveConfirm.value.trim(),

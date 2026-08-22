@@ -98,10 +98,32 @@ class MonitorConfig(BaseModel):
     api_trading_testnet: bool = env_bool("API_TRADING_TESTNET", True)
     api_trading_long_enabled: bool = env_bool("API_TRADING_LONG_ENABLED", True)
     api_trading_short_enabled: bool = env_bool("API_TRADING_SHORT_ENABLED", False)
+    api_oi_5m_threshold: float = Field(default=env_float("API_OI_5M_THRESHOLD", 3.0), ge=0)
+    api_volume_multiple_threshold: float = Field(default=env_float("API_VOLUME_MULTIPLE_THRESHOLD", 1.5), ge=0)
+    api_signal_strength_threshold: int = Field(default=env_int("API_SIGNAL_STRENGTH_THRESHOLD", 50), ge=0, le=100)
+    api_max_data_age_seconds: int = Field(default=env_int("API_MAX_DATA_AGE_SECONDS", 90), ge=30, le=300)
+    api_min_24h_quote_volume: float = Field(default=env_float("API_MIN_24H_QUOTE_VOLUME", 0.0), ge=0)
     api_equity_risk_pct: float = Field(default=env_float("API_EQUITY_RISK_PCT", 1.0), ge=0.1, le=100)
     api_max_notional_per_trade: float = Field(default=env_float("API_MAX_NOTIONAL_PER_TRADE", 0.0), ge=0, le=10_000)
     api_max_open_positions: int = Field(default=env_int("API_MAX_OPEN_POSITIONS", 1), ge=1, le=10)
     api_leverage: int = Field(default=env_int("API_LEVERAGE", 1), ge=1, le=20)
+    api_stop_loss_pct: float = Field(default=env_float("API_STOP_LOSS_PCT", 2.0), ge=0.1, le=20)
+    api_take_profit_pct: float = Field(default=env_float("API_TAKE_PROFIT_PCT", 4.0), ge=0.1, le=50)
+    api_max_hold_minutes: int = Field(default=env_int("API_MAX_HOLD_MINUTES", 45), ge=1, le=240)
+    api_reentry_cooldown_minutes: int = Field(default=env_int("API_REENTRY_COOLDOWN_MINUTES", 15), ge=0, le=120)
+    api_roll_window_minutes: int = Field(default=env_int("API_ROLL_WINDOW_MINUTES", 10), ge=1, le=60)
+    api_max_roll_entries: int = Field(default=env_int("API_MAX_ROLL_ENTRIES", 2), ge=0, le=5)
+    api_pullback_roll_risk_factor: float = Field(default=env_float("API_PULLBACK_ROLL_RISK_FACTOR", 0.5), ge=0.1, le=1)
+    api_momentum_roll_risk_factor: float = Field(default=env_float("API_MOMENTUM_ROLL_RISK_FACTOR", 0.3), ge=0.1, le=1)
+    api_roll_stop_loss_pct: float = Field(default=env_float("API_ROLL_STOP_LOSS_PCT", 1.5), ge=0.1, le=10)
+    api_pullback_min_pct: float = Field(default=env_float("API_PULLBACK_MIN_PCT", 0.5), ge=0.1, le=10)
+    api_pullback_max_pct: float = Field(default=env_float("API_PULLBACK_MAX_PCT", 1.2), ge=0.1, le=10)
+    api_breakeven_trigger_pct: float = Field(default=env_float("API_BREAKEVEN_TRIGGER_PCT", 2.0), ge=0.1, le=20)
+    api_trailing_trigger_pct: float = Field(default=env_float("API_TRAILING_TRIGGER_PCT", 3.0), ge=0.1, le=30)
+    api_trailing_protect_ratio: float = Field(default=env_float("API_TRAILING_PROTECT_RATIO", 0.5), ge=0.1, le=0.95)
+    api_daily_loss_limit_pct: float = Field(default=env_float("API_DAILY_LOSS_LIMIT_PCT", 10.0), ge=0.1, le=50)
+    api_max_consecutive_losses: int = Field(default=env_int("API_MAX_CONSECUTIVE_LOSSES", 5), ge=1, le=20)
+    api_loss_pause_minutes: int = Field(default=env_int("API_LOSS_PAUSE_MINUTES", 240), ge=1, le=1440)
 
 
 @dataclass
@@ -141,6 +163,8 @@ class BinanceMonitor:
         self.api_trades: deque[dict[str, Any]] = deque(maxlen=200)
         self.api_cooldowns: dict[str, float] = {}
         self.api_roll_setups: dict[str, dict[str, Any]] = {}
+        self.api_consecutive_losses = 0
+        self.api_pause_until = 0.0
         self.runtime_api_key = ""
         self.runtime_api_secret = ""
         self.runtime_live_trading_confirm = ""
@@ -718,10 +742,21 @@ class BinanceMonitor:
         self._update_paper_reentry_state(position, exit_price, reason)
         schedule_background_task(self._send_dingtalk_trade_alert("模拟平仓", trade))
 
-    def _update_paper_trailing_stop(self, position: dict[str, Any], latest_price: float, return_pct: float) -> None:
+    def _update_paper_trailing_stop(
+        self,
+        position: dict[str, Any],
+        latest_price: float,
+        return_pct: float,
+        breakeven_trigger_pct: float | None = None,
+        trailing_trigger_pct: float | None = None,
+        trailing_protect_ratio: float | None = None,
+    ) -> None:
         config = self.config
+        breakeven_trigger_pct = config.paper_breakeven_trigger_pct if breakeven_trigger_pct is None else breakeven_trigger_pct
+        trailing_trigger_pct = config.paper_trailing_trigger_pct if trailing_trigger_pct is None else trailing_trigger_pct
+        trailing_protect_ratio = config.paper_trailing_protect_ratio if trailing_protect_ratio is None else trailing_protect_ratio
         position["bestReturnPct"] = max(float(position.get("bestReturnPct", 0)), return_pct)
-        if return_pct < config.paper_breakeven_trigger_pct:
+        if return_pct < breakeven_trigger_pct:
             return
         side = position["side"]
         entry_price = float(position["entryPrice"])
@@ -735,9 +770,9 @@ class BinanceMonitor:
             if breakeven_stop < float(position["stopPrice"]):
                 position["stopPrice"] = breakeven_stop
                 position["trailingStopActive"] = True
-        if return_pct < config.paper_trailing_trigger_pct:
+        if return_pct < trailing_trigger_pct:
             return
-        protected_return = max(0.0, position["bestReturnPct"] * config.paper_trailing_protect_ratio)
+        protected_return = max(0.0, position["bestReturnPct"] * trailing_protect_ratio)
         if side == "long":
             trailing_stop = entry_price * (1 + protected_return / 100)
             if trailing_stop > float(position["stopPrice"]):
@@ -971,10 +1006,33 @@ class BinanceMonitor:
                 return value
         return 0.0
 
+    def _api_signal_direction(self, row: dict[str, Any]) -> str:
+        return classify_signal(
+            row.get("oiChange5m"),
+            row.get("priceChange5m"),
+            float(row.get("fundingRate") or 0),
+            self.config.api_oi_5m_threshold,
+        )
+
+    def _api_row_is_tradeable(self, row: dict[str, Any]) -> bool:
+        config = self.config
+        if int(row.get("dataAgeSeconds") or 999999) > config.api_max_data_age_seconds:
+            return False
+        if self._api_signal_direction(row) == "观察":
+            return False
+        if safe_num(row.get("oiChange5m")) < config.api_oi_5m_threshold:
+            return False
+        if safe_num(row.get("volumeMultiple5m")) < config.api_volume_multiple_threshold:
+            return False
+        if safe_num(row.get("quoteVolume24h")) < config.api_min_24h_quote_volume:
+            return False
+        return int(row.get("signalStrength") or 0) >= config.api_signal_strength_threshold
+
     async def _maybe_open_api_position(self, row: dict[str, Any]) -> None:
         config = self.config
         symbol = row["symbol"]
-        side = paper_side_from_signal(row["signalDirection"])
+        signal_direction = self._api_signal_direction(row)
+        side = paper_side_from_signal(signal_direction)
         if side is None:
             return
         if side == "long" and not config.api_trading_long_enabled:
@@ -983,13 +1041,13 @@ class BinanceMonitor:
             return
         if symbol in self.api_positions:
             return
-        if self._paper_opening_paused():
+        if self._api_opening_paused():
             return
         if time.time() < self.api_cooldowns.get(symbol, 0):
             return
         if len(self.api_positions) >= config.api_max_open_positions:
             return
-        if not row["isStrongSignal"] or row["isStale"]:
+        if not self._api_row_is_tradeable(row):
             return
         latest_price = float(row["latestPrice"])
         if latest_price <= 0:
@@ -999,8 +1057,8 @@ class BinanceMonitor:
         if had_roll_setup and not roll_setup and symbol in self.api_roll_setups:
             return
         risk_factor = roll_setup["riskFactor"] if roll_setup else 1.0
-        stop_loss_pct_value = config.paper_roll_stop_loss_pct if roll_setup else config.paper_stop_loss_pct
-        take_profit_pct_value = config.paper_take_profit_pct
+        stop_loss_pct_value = config.api_roll_stop_loss_pct if roll_setup else config.api_stop_loss_pct
+        take_profit_pct_value = config.api_take_profit_pct
         equity = self._api_account_equity()
         if equity <= 0:
             self.api_status = self._api_status(f"{symbol} 无法读取账户权益，暂不开仓", ready=True)
@@ -1050,7 +1108,7 @@ class BinanceMonitor:
             "takeProfitPrice": take_profit_price,
             "entryAt": time.time(),
             "entryTime": iso_now(),
-            "signalDirection": row["signalDirection"],
+            "signalDirection": signal_direction,
             "signalStrength": row["signalStrength"],
             "entryType": roll_setup["mode"] if roll_setup else "首仓",
             "rollCount": roll_setup["nextRollCount"] if roll_setup else 0,
@@ -1071,40 +1129,47 @@ class BinanceMonitor:
         if not setup:
             return None
         now = time.time()
-        if now - setup["createdAt"] > config.paper_roll_window_minutes * 60:
+        if now - setup["createdAt"] > config.api_roll_window_minutes * 60:
             self.api_roll_setups.pop(row["symbol"], None)
             return None
-        if setup["side"] != side or setup["rollCount"] >= config.paper_max_roll_entries:
+        if setup["side"] != side or setup["rollCount"] >= config.api_max_roll_entries:
             self.api_roll_setups.pop(row["symbol"], None)
             return None
         if row["oiChange5m"] is None or row["volumeMultiple5m"] is None:
             return None
-        if row["oiChange5m"] < config.oi_5m_threshold or row["volumeMultiple5m"] < config.volume_multiple_threshold:
+        if row["oiChange5m"] < config.api_oi_5m_threshold or row["volumeMultiple5m"] < config.api_volume_multiple_threshold:
             return None
         price_5m = float(row["priceChange5m"] or 0)
         exit_price = float(setup["exitPrice"])
         if side == "long":
             pullback_pct = ((exit_price - latest_price) / exit_price) * 100
             momentum_ok = latest_price > exit_price and price_5m > 0
-            pullback_ok = config.paper_pullback_min_pct <= pullback_pct <= config.paper_pullback_max_pct and price_5m > 0
+            pullback_ok = config.api_pullback_min_pct <= pullback_pct <= config.api_pullback_max_pct and price_5m > 0
         else:
             pullback_pct = ((latest_price - exit_price) / exit_price) * 100
             momentum_ok = latest_price < exit_price and price_5m < 0
-            pullback_ok = config.paper_pullback_min_pct <= pullback_pct <= config.paper_pullback_max_pct and price_5m < 0
+            pullback_ok = config.api_pullback_min_pct <= pullback_pct <= config.api_pullback_max_pct and price_5m < 0
         if pullback_ok:
-            return {"mode": "回踩滚仓", "riskFactor": config.paper_pullback_roll_risk_factor, "nextRollCount": setup["rollCount"] + 1}
+            return {"mode": "回踩滚仓", "riskFactor": config.api_pullback_roll_risk_factor, "nextRollCount": setup["rollCount"] + 1}
         if momentum_ok:
-            return {"mode": "动量滚仓", "riskFactor": config.paper_momentum_roll_risk_factor, "nextRollCount": setup["rollCount"] + 1}
+            return {"mode": "动量滚仓", "riskFactor": config.api_momentum_roll_risk_factor, "nextRollCount": setup["rollCount"] + 1}
         return None
 
     async def _maybe_close_api_position(self, position: dict[str, Any], row: dict[str, Any]) -> None:
         latest_price = float(row["latestPrice"])
         side_mult = 1 if position["side"] == "long" else -1
         return_pct = ((latest_price - position["entryPrice"]) / position["entryPrice"]) * side_mult * 100
-        self._update_paper_trailing_stop(position, latest_price, return_pct)
+        self._update_paper_trailing_stop(
+            position,
+            latest_price,
+            return_pct,
+            self.config.api_breakeven_trigger_pct,
+            self.config.api_trailing_trigger_pct,
+            self.config.api_trailing_protect_ratio,
+        )
         age_minutes = (time.time() - position["entryAt"]) / 60
-        stop_loss_pct = float(position.get("stopLossPct", self.config.paper_stop_loss_pct))
-        take_profit_pct = float(position.get("takeProfitPct", self.config.paper_take_profit_pct))
+        stop_loss_pct = float(position.get("stopLossPct", self.config.api_stop_loss_pct))
+        take_profit_pct = float(position.get("takeProfitPct", self.config.api_take_profit_pct))
         reason = None
         if self._paper_stop_hit(position, latest_price):
             reason = "移动止损" if position.get("trailingStopActive") else "止损"
@@ -1112,11 +1177,11 @@ class BinanceMonitor:
             reason = "止损"
         elif return_pct >= take_profit_pct:
             reason = "止盈"
-        elif age_minutes >= self.config.paper_max_hold_minutes:
+        elif age_minutes >= self.config.api_max_hold_minutes:
             reason = "超时"
         else:
-            new_side = paper_side_from_signal(row["signalDirection"])
-            if new_side and new_side != position["side"] and row["isStrongSignal"]:
+            new_side = paper_side_from_signal(self._api_signal_direction(row))
+            if new_side and new_side != position["side"] and self._api_row_is_tradeable(row):
                 reason = "反向信号"
         if reason:
             await self._close_api_position(position, latest_price, reason)
@@ -1160,13 +1225,14 @@ class BinanceMonitor:
         }
         self.api_trades.appendleft(trade)
         self.api_positions.pop(symbol, None)
+        self._update_api_risk_state(gross_pnl)
         self._update_api_reentry_state(position, exit_price, reason)
         schedule_background_task(self._send_dingtalk_trade_alert("API平仓", trade))
 
     def _update_api_reentry_state(self, position: dict[str, Any], exit_price: float, reason: str) -> None:
         symbol = position["symbol"]
         self.api_roll_setups.pop(symbol, None)
-        if reason == "止盈" and position.get("rollCount", 0) < self.config.paper_max_roll_entries:
+        if reason == "止盈" and position.get("rollCount", 0) < self.config.api_max_roll_entries:
             self.api_cooldowns.pop(symbol, None)
             self.api_roll_setups[symbol] = {
                 "symbol": symbol,
@@ -1176,9 +1242,39 @@ class BinanceMonitor:
                 "rollCount": int(position.get("rollCount", 0)),
             }
             return
-        cooldown_seconds = self.config.paper_reentry_cooldown_minutes * 60
+        cooldown_seconds = self.config.api_reentry_cooldown_minutes * 60
         if cooldown_seconds > 0:
             self.api_cooldowns[symbol] = time.time() + cooldown_seconds
+
+    def _api_opening_paused(self) -> bool:
+        if time.time() < self.api_pause_until:
+            return True
+        return self._api_daily_pnl_pct() <= -self.config.api_daily_loss_limit_pct
+
+    def _api_daily_pnl(self) -> float:
+        today = local_day()
+        return sum(float(trade.get("pnl") or 0) for trade in self.api_trades if str(trade.get("exitTime", "")).startswith(today))
+
+    def _api_daily_pnl_pct(self) -> float:
+        equity = self._api_account_equity()
+        if equity <= 0:
+            return 0.0
+        return (self._api_daily_pnl() / equity) * 100
+
+    def _update_api_risk_state(self, pnl: float) -> None:
+        if pnl < 0:
+            self.api_consecutive_losses += 1
+            if self.api_consecutive_losses >= self.config.api_max_consecutive_losses:
+                self.api_pause_until = time.time() + self.config.api_loss_pause_minutes * 60
+        else:
+            self.api_consecutive_losses = 0
+
+    def _api_pause_reason(self) -> str:
+        if time.time() < self.api_pause_until:
+            return f"连亏暂停，至 {iso_at(self.api_pause_until)}"
+        if self._api_daily_pnl_pct() <= -self.config.api_daily_loss_limit_pct:
+            return "今日亏损达到上限"
+        return "正常"
 
     async def _api_set_leverage(self, symbol: str) -> None:
         await self._api_signed_request("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": self.config.api_leverage})
@@ -1307,19 +1403,38 @@ class BinanceMonitor:
                 "testnet": self.config.api_trading_testnet,
                 "longEnabled": self.config.api_trading_long_enabled,
                 "shortEnabled": self.config.api_trading_short_enabled,
+                "oi5mThreshold": self.config.api_oi_5m_threshold,
+                "volumeMultipleThreshold": self.config.api_volume_multiple_threshold,
+                "signalStrengthThreshold": self.config.api_signal_strength_threshold,
+                "maxDataAgeSeconds": self.config.api_max_data_age_seconds,
+                "min24hQuoteVolume": self.config.api_min_24h_quote_volume,
                 "equityRiskPct": self.config.api_equity_risk_pct,
                 "maxNotionalPerTrade": self.config.api_max_notional_per_trade,
                 "maxOpenPositions": self.config.api_max_open_positions,
                 "leverage": self.config.api_leverage,
-                "stopLossPct": self.config.paper_stop_loss_pct,
-                "takeProfitPct": self.config.paper_take_profit_pct,
-                "maxHoldMinutes": self.config.paper_max_hold_minutes,
-                "reentryCooldownMinutes": self.config.paper_reentry_cooldown_minutes,
-                "breakevenTriggerPct": self.config.paper_breakeven_trigger_pct,
-                "trailingTriggerPct": self.config.paper_trailing_trigger_pct,
-                "trailingProtectRatio": self.config.paper_trailing_protect_ratio,
-                "maxRollEntries": self.config.paper_max_roll_entries,
-                "rollStopLossPct": self.config.paper_roll_stop_loss_pct,
+                "stopLossPct": self.config.api_stop_loss_pct,
+                "takeProfitPct": self.config.api_take_profit_pct,
+                "maxHoldMinutes": self.config.api_max_hold_minutes,
+                "reentryCooldownMinutes": self.config.api_reentry_cooldown_minutes,
+                "rollWindowMinutes": self.config.api_roll_window_minutes,
+                "maxRollEntries": self.config.api_max_roll_entries,
+                "pullbackRollRiskFactor": self.config.api_pullback_roll_risk_factor,
+                "momentumRollRiskFactor": self.config.api_momentum_roll_risk_factor,
+                "rollStopLossPct": self.config.api_roll_stop_loss_pct,
+                "pullbackMinPct": self.config.api_pullback_min_pct,
+                "pullbackMaxPct": self.config.api_pullback_max_pct,
+                "breakevenTriggerPct": self.config.api_breakeven_trigger_pct,
+                "trailingTriggerPct": self.config.api_trailing_trigger_pct,
+                "trailingProtectRatio": self.config.api_trailing_protect_ratio,
+                "dailyLossLimitPct": self.config.api_daily_loss_limit_pct,
+                "maxConsecutiveLosses": self.config.api_max_consecutive_losses,
+                "lossPauseMinutes": self.config.api_loss_pause_minutes,
+                "dailyPnl": self._api_daily_pnl(),
+                "dailyPnlPct": self._api_daily_pnl_pct(),
+                "consecutiveLosses": self.api_consecutive_losses,
+                "openingPaused": self._api_opening_paused(),
+                "pauseReason": self._api_pause_reason(),
+                "pauseUntil": iso_at(self.api_pause_until) if time.time() < self.api_pause_until else "-",
             } if include_details else {},
             "account": self.api_account if include_details else {},
             "openCount": len(self.api_positions),
@@ -1583,10 +1698,32 @@ def api_config_changed(old_config: MonitorConfig, new_config: MonitorConfig) -> 
         "api_trading_testnet",
         "api_trading_long_enabled",
         "api_trading_short_enabled",
+        "api_oi_5m_threshold",
+        "api_volume_multiple_threshold",
+        "api_signal_strength_threshold",
+        "api_max_data_age_seconds",
+        "api_min_24h_quote_volume",
         "api_equity_risk_pct",
         "api_max_notional_per_trade",
         "api_max_open_positions",
         "api_leverage",
+        "api_stop_loss_pct",
+        "api_take_profit_pct",
+        "api_max_hold_minutes",
+        "api_reentry_cooldown_minutes",
+        "api_roll_window_minutes",
+        "api_max_roll_entries",
+        "api_pullback_roll_risk_factor",
+        "api_momentum_roll_risk_factor",
+        "api_roll_stop_loss_pct",
+        "api_pullback_min_pct",
+        "api_pullback_max_pct",
+        "api_breakeven_trigger_pct",
+        "api_trailing_trigger_pct",
+        "api_trailing_protect_ratio",
+        "api_daily_loss_limit_pct",
+        "api_max_consecutive_losses",
+        "api_loss_pause_minutes",
     }
     return any(getattr(old_config, field) != getattr(new_config, field) for field in api_fields)
 

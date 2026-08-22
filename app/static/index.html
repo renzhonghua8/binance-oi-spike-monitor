@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Binance U本位合约 OI 异动监控</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260822-11" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260822-13" />
   </head>
   <body>
     <main class="app">
@@ -34,7 +34,7 @@
         <div class="settingGroup">
           <div class="groupCopy">
             <h3>信号筛选</h3>
-            <p>只影响异动榜、信号记录和策略触发条件，不会直接下单。</p>
+            <p>只影响异动榜、信号记录和监控模拟交易；实盘开仓请在实盘入口中单独设置。</p>
           </div>
           <div class="controls">
             <label class="toggle">
@@ -86,7 +86,7 @@
         <div class="settingGroup">
           <div class="groupCopy">
             <h3>交易风控</h3>
-            <p>同时影响模拟交易和 API 实盘新开仓；已有持仓仍会继续止盈止损。</p>
+            <p>只影响监控模拟交易；实盘交易请在实盘入口中单独设置。</p>
           </div>
           <div class="controls">
             <label>
@@ -192,6 +192,34 @@
         <div class="liveUnlocked hidden" id="liveUnlocked">
           <div class="settingGroup liveSettings">
             <div class="groupCopy">
+              <h3>实盘信号筛选</h3>
+              <p>只影响 API 实盘是否开仓，不影响监控模拟页的异动榜和模拟交易。</p>
+            </div>
+            <div class="controls apiControls">
+              <label>
+                <span>实盘 5m OI 增长 %</span>
+                <input id="apiOiThreshold" type="number" min="0" step="0.1" />
+              </label>
+              <label>
+                <span>实盘 5m 成交量倍数</span>
+                <input id="apiVolumeThreshold" type="number" min="0" step="0.1" />
+              </label>
+              <label>
+                <span>实盘最低信号分数</span>
+                <input id="apiStrengthThreshold" type="number" min="0" max="100" step="1" />
+              </label>
+              <label>
+                <span>实盘数据过期秒数</span>
+                <input id="apiMaxAge" type="number" min="30" max="300" step="5" />
+              </label>
+              <label>
+                <span>实盘最低24h成交额 USDT</span>
+                <input id="apiMinVolume" type="number" min="0" step="1000000" />
+              </label>
+            </div>
+          </div>
+          <div class="settingGroup liveSettings">
+            <div class="groupCopy">
               <h3>实盘参数</h3>
               <p>开启后，策略遇到强信号才会下单。做多/做空只是方向权限，不是手动下单按钮。</p>
             </div>
@@ -228,6 +256,74 @@
                 <span>API杠杆倍数</span>
                 <input id="apiLeverage" type="number" min="1" max="20" step="1" />
               </label>
+            </div>
+          </div>
+          <div class="settingGroup liveSettings">
+            <div class="groupCopy">
+              <h3>实盘交易风控</h3>
+              <p>只影响 API 实盘新开仓和平仓管理；不会改变监控模拟页参数。</p>
+            </div>
+            <div class="controls apiControls">
+              <label>
+                <span>实盘首仓止损 %</span>
+                <input id="apiStopLossPct" type="number" min="0.1" max="20" step="0.1" />
+              </label>
+              <label>
+                <span>实盘止盈 %</span>
+                <input id="apiTakeProfitPct" type="number" min="0.1" max="50" step="0.1" />
+              </label>
+              <label>
+                <span>实盘最大持仓 分钟</span>
+                <input id="apiMaxHoldMinutes" type="number" min="1" max="240" step="1" />
+              </label>
+              <label>
+                <span>实盘止损后冷却 分钟</span>
+                <input id="apiReentryCooldownMinutes" type="number" min="0" max="120" step="1" />
+              </label>
+              <label>
+                <span>实盘保本触发 %</span>
+                <input id="apiBreakevenTriggerPct" type="number" min="0.1" max="20" step="0.1" />
+              </label>
+              <label>
+                <span>实盘移动止损触发 %</span>
+                <input id="apiTrailingTriggerPct" type="number" min="0.1" max="30" step="0.1" />
+              </label>
+              <label>
+                <span>实盘移动保护比例</span>
+                <input id="apiTrailingProtectRatio" type="number" min="0.1" max="0.95" step="0.05" />
+              </label>
+              <label>
+                <span>实盘最大滚仓次数</span>
+                <input id="apiMaxRollEntries" type="number" min="0" max="5" step="1" />
+              </label>
+              <label>
+                <span>实盘滚仓窗口 分钟</span>
+                <input id="apiRollWindowMinutes" type="number" min="1" max="60" step="1" />
+              </label>
+              <label>
+                <span>实盘滚仓止损 %</span>
+                <input id="apiRollStopLossPct" type="number" min="0.1" max="10" step="0.1" />
+              </label>
+              <label>
+                <span>实盘今日亏损停机 %</span>
+                <input id="apiDailyLossLimit" type="number" min="0.1" max="50" step="0.1" />
+              </label>
+              <label>
+                <span>实盘连续亏损暂停 笔</span>
+                <input id="apiMaxLossStreak" type="number" min="1" max="20" step="1" />
+              </label>
+              <label>
+                <span>实盘暂停时间 分钟</span>
+                <input id="apiLossPauseMinutes" type="number" min="1" max="1440" step="10" />
+              </label>
+            </div>
+          </div>
+          <div class="settingGroup liveSettings">
+            <div class="groupCopy">
+              <h3>实盘密钥</h3>
+              <p>修改实盘交易、信号和风控参数时必须输入操作密钥。</p>
+            </div>
+            <div class="controls apiControls">
               <label class="wideField">
                 <span>Binance API Key</span>
                 <input id="apiKeyInput" type="password" autocomplete="off" placeholder="留空则保持当前 Key，可写在 .env" />
@@ -276,6 +372,11 @@
             <div><span>账户更新时间</span><strong id="apiAccountUpdatedAt">-</strong></div>
           </div>
           <div class="paperStats liveRiskParams">
+            <div><span>实盘 OI 阈值</span><strong id="apiSignalOi">-</strong></div>
+            <div><span>实盘量倍数</span><strong id="apiSignalVolume">-</strong></div>
+            <div><span>实盘最低分</span><strong id="apiSignalStrength">-</strong></div>
+            <div><span>数据过期</span><strong id="apiSignalAge">-</strong></div>
+            <div><span>实盘24h成交额</span><strong id="apiSignalMinVolume">-</strong></div>
             <div><span>首仓止损</span><strong id="apiRiskStopLoss">-</strong></div>
             <div><span>止盈</span><strong id="apiRiskTakeProfit">-</strong></div>
             <div><span>最大持仓</span><strong id="apiRiskMaxHold">-</strong></div>
@@ -285,6 +386,9 @@
             <div><span>保护比例</span><strong id="apiRiskProtectRatio">-</strong></div>
             <div><span>滚仓次数</span><strong id="apiRiskRolls">-</strong></div>
             <div><span>滚仓止损</span><strong id="apiRiskRollStop">-</strong></div>
+            <div><span>今日亏损停机</span><strong id="apiRiskDailyLoss">-</strong></div>
+            <div><span>连续亏损暂停</span><strong id="apiRiskLossStreak">-</strong></div>
+            <div><span>开仓状态</span><strong id="apiRiskPause">-</strong></div>
           </div>
           <div class="paperTables">
             <div class="paperPanel positionsPanel">
@@ -503,6 +607,6 @@
         </table>
       </section>
     </main>
-    <script src="/static/app.js?v=20260822-11"></script>
+    <script src="/static/app.js?v=20260822-13"></script>
   </body>
 </html>
