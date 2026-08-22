@@ -524,7 +524,7 @@ async function saveConfig(saveButton) {
   setSaveStatus("保存成功，配置已生效", "successTextInline");
   setTimeout(() => {
     saveButton.textContent = idleText;
-    if (!state.settingsDirty) setSaveStatus("实时同步中", "");
+    if (!state.settingsDirty) setSaveStatus("页面实时同步中", "");
   }, 1200);
 }
 

@@ -213,6 +213,7 @@ class BinanceMonitor:
             now = time.time()
             if now < self._backoff_until:
                 wait_seconds = int(self._backoff_until - now)
+                await self._sync_api_account_without_market("行情限流中，仅同步账户")
                 async with self._lock:
                     self.status = {
                         "ok": False,
@@ -261,6 +262,7 @@ class BinanceMonitor:
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in {418, 429}:
                 self._backoff_until = time.time() + 300
+                await self._sync_api_account_without_market("行情限流中，仅同步账户")
             async with self._lock:
                 self.status = {
                     "ok": False,
@@ -931,6 +933,20 @@ class BinanceMonitor:
             await self._maybe_open_api_position(row)
         self.api_status = self._api_status("运行中", ready=True)
 
+    async def _sync_api_account_without_market(self, active_message: str) -> None:
+        config = self.config
+        ready_error = self._api_ready_error()
+        if not config.api_trading_enabled:
+            if ready_error is None:
+                await self._sync_api_account_state()
+            self.api_status = self._api_status("未开启，不会下单", enabled=False)
+            return
+        if ready_error:
+            self.api_status = self._api_status(ready_error, ready=False)
+            return
+        if await self._sync_api_account_state():
+            self.api_status = self._api_status(active_message, ready=True)
+
     def _api_ready_error(self) -> str | None:
         if not self._api_key() or not self._api_secret():
             return "缺少 Binance API Key / Secret，请在页面或 .env 配置"
@@ -1258,8 +1274,13 @@ class BinanceMonitor:
         return format(final_qty.normalize(), "f")
 
     def _api_snapshot(self, include_details: bool = False) -> dict[str, Any]:
+        status = {**self.api_status}
+        status["enabled"] = self.config.api_trading_enabled
+        status["mode"] = "testnet" if self.config.api_trading_testnet else "live"
+        if self.config.api_trading_enabled and status.get("message") in {"未开启", "未开启，不会下单"}:
+            status["message"] = "等待账户同步"
         return {
-            **self.api_status,
+            **status,
             "hasKeys": bool(self._api_key() and self._api_secret()),
             "keySource": self._api_key_source(),
             "liveConfirmed": self._api_live_confirmed(),
