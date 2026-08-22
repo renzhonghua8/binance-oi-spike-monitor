@@ -39,6 +39,27 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
 
+def env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
 class MonitorConfig(BaseModel):
     monitor_all: bool = True
     top_symbols: int = Field(default=120, ge=5, le=500)
@@ -73,13 +94,13 @@ class MonitorConfig(BaseModel):
     paper_daily_loss_limit_pct: float = Field(default=10.0, ge=0.1, le=50)
     paper_max_consecutive_losses: int = Field(default=5, ge=1, le=20)
     paper_loss_pause_minutes: int = Field(default=240, ge=1, le=1440)
-    api_trading_enabled: bool = False
-    api_trading_testnet: bool = True
-    api_trading_long_enabled: bool = True
-    api_trading_short_enabled: bool = False
-    api_max_notional_per_trade: float = Field(default=20.0, ge=5, le=10_000)
-    api_max_open_positions: int = Field(default=1, ge=1, le=10)
-    api_leverage: int = Field(default=1, ge=1, le=20)
+    api_trading_enabled: bool = env_bool("API_TRADING_ENABLED", False)
+    api_trading_testnet: bool = env_bool("API_TRADING_TESTNET", True)
+    api_trading_long_enabled: bool = env_bool("API_TRADING_LONG_ENABLED", True)
+    api_trading_short_enabled: bool = env_bool("API_TRADING_SHORT_ENABLED", False)
+    api_max_notional_per_trade: float = Field(default=env_float("API_MAX_NOTIONAL_PER_TRADE", 20.0), ge=5, le=10_000)
+    api_max_open_positions: int = Field(default=env_int("API_MAX_OPEN_POSITIONS", 1), ge=1, le=10)
+    api_leverage: int = Field(default=env_int("API_LEVERAGE", 1), ge=1, le=20)
 
 
 @dataclass
@@ -1566,6 +1587,17 @@ async def startup() -> None:
 
 @app.get("/")
 async def index() -> FileResponse:
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+
+
+@app.get("/live")
+async def live_index() -> FileResponse:
     return FileResponse(
         STATIC_DIR / "index.html",
         headers={

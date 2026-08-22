@@ -48,6 +48,13 @@ BINANCE_API_SECRET=你的testnet或主网API Secret
 ADMIN_ACTION_KEY=用于修改API交易设置的操作密钥
 LIVE_TRADING_ACCESS_KEY=进入实盘交易页面的口令，可留空使用ADMIN_ACTION_KEY
 BINANCE_LIVE_TRADING_CONFIRM=
+API_TRADING_ENABLED=false
+API_TRADING_TESTNET=true
+API_TRADING_LONG_ENABLED=true
+API_TRADING_SHORT_ENABLED=false
+API_MAX_NOTIONAL_PER_TRADE=20
+API_MAX_OPEN_POSITIONS=1
+API_LEVERAGE=1
 ```
 
 启动：
@@ -112,6 +119,12 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 ```text
 http://127.0.0.1:8000
+```
+
+实盘独立入口：
+
+```text
+http://127.0.0.1:8000/live
 ```
 
 页面、钉钉告警、模拟交易记录时间统一按 UTC+8 显示。

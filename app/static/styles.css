@@ -38,6 +38,33 @@ body {
   margin-bottom: 18px;
 }
 
+.topnav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.topnav a {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.topnav a.active {
+  background: var(--cyan);
+  color: #061016;
+}
+
 h1 {
   margin: 0 0 6px;
   font-size: 28px;
@@ -100,7 +127,8 @@ p {
   gap: 12px;
 }
 
-#saveStatus {
+#saveStatus,
+#saveStatusLive {
   color: var(--muted);
   font-size: 12px;
 }
@@ -142,6 +170,14 @@ p {
 
 .hidden {
   display: none !important;
+}
+
+.monitorPage .liveGate {
+  display: none;
+}
+
+.livePage .monitorOnly {
+  display: none;
 }
 
 .dangerText {

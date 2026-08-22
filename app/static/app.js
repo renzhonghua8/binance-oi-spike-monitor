@@ -13,6 +13,7 @@ const state = {
   liveUnlocked: Boolean(sessionStorage.getItem("liveAccessToken")),
   liveToken: sessionStorage.getItem("liveAccessToken") || "",
   events: null,
+  isLivePage: window.location.pathname.startsWith("/live"),
 };
 
 const fields = {
@@ -44,6 +45,17 @@ const fields = {
 
 const rowsEl = document.querySelector("#rows");
 const statusEl = document.querySelector("#status");
+
+function setupPageMode() {
+  document.body.classList.toggle("livePage", state.isLivePage);
+  document.body.classList.toggle("monitorPage", !state.isLivePage);
+  document.querySelector("#monitorNav").classList.toggle("active", !state.isLivePage);
+  document.querySelector("#liveNav").classList.toggle("active", state.isLivePage);
+  if (state.isLivePage) {
+    document.querySelector("h1").textContent = "Binance U本位合约实盘交易";
+    document.querySelector(".topbar p").textContent = "独立实盘入口，输入口令后管理 API 交易参数与真实持仓";
+  }
+}
 
 function initStream() {
   if (state.events) state.events.close();
@@ -132,9 +144,12 @@ function syncDependentSettingState() {
 }
 
 function setSaveStatus(text, className = "") {
-  const el = document.querySelector("#saveStatus");
-  el.textContent = text;
-  el.className = className;
+  ["#saveStatus", "#saveStatusLive"].forEach((selector) => {
+    const el = document.querySelector(selector);
+    if (!el) return;
+    el.textContent = text;
+    el.className = className;
+  });
 }
 
 function setStatus(ok, message) {
@@ -539,4 +554,5 @@ document.querySelector("#resetPaper").addEventListener("click", async () => {
   await fetch("/api/paper/reset", { method: "POST" });
 });
 
+setupPageMode();
 initStream();

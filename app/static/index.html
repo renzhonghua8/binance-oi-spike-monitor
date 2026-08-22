@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Binance U本位合约 OI 异动监控</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260822-2" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260822-3" />
   </head>
   <body>
     <main class="app">
@@ -13,13 +13,17 @@
           <h1>Binance U本位合约 OI 异动监控</h1>
           <p>5 分钟内持仓量突增、价格与成交量共振扫描</p>
         </div>
+        <nav class="topnav">
+          <a href="/" id="monitorNav">监控模拟</a>
+          <a href="/live" id="liveNav">实盘交易</a>
+        </nav>
         <div class="status" id="status">
           <span class="dot"></span>
           <span>连接中</span>
         </div>
       </header>
 
-      <section class="settings">
+      <section class="settings monitorOnly">
         <div class="settingsHead">
           <h2>监控与交易设置</h2>
           <div class="saveBox">
@@ -101,7 +105,7 @@
         </div>
       </section>
 
-      <section class="summary">
+      <section class="summary monitorOnly">
         <div>
           <span>追踪合约</span>
           <strong id="tracked">0</strong>
@@ -201,6 +205,7 @@
                 <input id="adminKey" type="password" autocomplete="off" placeholder="ADMIN_ACTION_KEY" />
               </label>
               <button id="saveLiveConfig">保存实盘设置</button>
+              <span id="saveStatusLive">等待保存</span>
             </div>
             <p class="dangerText" id="adminKeyHint">API交易参数受操作密钥保护；未输入正确密钥不能保存关键改动。</p>
           </div>
@@ -279,7 +284,7 @@
         </div>
       </section>
 
-      <section class="paper">
+      <section class="paper monitorOnly">
         <div class="sectionHead">
           <h2>模拟交易</h2>
           <span>首仓 2%/4%；止盈后可滚仓，止损后冷却 15 分钟</span>
@@ -377,7 +382,7 @@
         </div>
       </section>
 
-      <section class="history">
+      <section class="history monitorOnly">
         <div class="sectionHead">
           <h2>信号方向记录</h2>
           <span>规则：信号方向不是“观察”且数据未过期；同一币种 3 分钟内不重复</span>
@@ -403,12 +408,12 @@
         </div>
       </section>
 
-      <section class="sectionHead mainListHead">
+      <section class="sectionHead mainListHead monitorOnly">
         <h2>全市场异动榜</h2>
         <span>启动时会自动回填 5m 历史样本，1m/3m OI 仍以实时采样为准</span>
       </section>
 
-      <section class="tableWrap">
+      <section class="tableWrap monitorOnly">
         <table>
           <thead>
             <tr>
@@ -433,6 +438,6 @@
         </table>
       </section>
     </main>
-    <script src="/static/app.js?v=20260822-2"></script>
+    <script src="/static/app.js?v=20260822-3"></script>
   </body>
 </html>
