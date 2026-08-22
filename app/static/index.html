@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Binance U本位合约 OI 异动监控</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260823-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260823-2" />
   </head>
   <body>
     <main class="app">
@@ -316,6 +316,10 @@
                 <span>实盘暂停时间 分钟</span>
                 <input id="apiLossPauseMinutes" type="number" min="1" max="1440" step="10" />
               </label>
+              <label>
+                <span>账户同步间隔 秒</span>
+                <input id="apiAccountSyncSeconds" type="number" min="5" max="300" step="5" />
+              </label>
             </div>
           </div>
           <div class="settingGroup liveSettings">
@@ -370,6 +374,7 @@
             <div><span>最大同时持仓</span><strong id="apiParamMaxOpen">-</strong></div>
             <div><span>杠杆</span><strong id="apiParamLeverage">-</strong></div>
             <div><span>账户更新时间</span><strong id="apiAccountUpdatedAt">-</strong></div>
+            <div><span>账户同步间隔</span><strong id="apiAccountSyncSecondsView">-</strong></div>
           </div>
           <div class="paperStats liveRiskParams">
             <div><span>实盘 OI 阈值</span><strong id="apiSignalOi">-</strong></div>
@@ -626,6 +631,6 @@
         </table>
       </section>
     </main>
-    <script src="/static/app.js?v=20260823-1"></script>
+    <script src="/static/app.js?v=20260823-2"></script>
   </body>
 </html>

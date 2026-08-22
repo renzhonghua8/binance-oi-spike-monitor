@@ -124,6 +124,7 @@ class MonitorConfig(BaseModel):
     api_daily_loss_limit_pct: float = Field(default=env_float("API_DAILY_LOSS_LIMIT_PCT", 10.0), ge=0.1, le=50)
     api_max_consecutive_losses: int = Field(default=env_int("API_MAX_CONSECUTIVE_LOSSES", 5), ge=1, le=20)
     api_loss_pause_minutes: int = Field(default=env_int("API_LOSS_PAUSE_MINUTES", 240), ge=1, le=1440)
+    api_account_sync_seconds: int = Field(default=env_int("API_ACCOUNT_SYNC_SECONDS", 30), ge=5, le=300)
 
 
 @dataclass
@@ -160,6 +161,7 @@ class BinanceMonitor:
         self.api_positions: dict[str, dict[str, Any]] = {}
         self.api_account: dict[str, Any] = {}
         self.api_exchange_positions: list[dict[str, Any]] = []
+        self.api_account_synced_at = 0.0
         self.api_trades: deque[dict[str, Any]] = deque(maxlen=200)
         self.api_skip_events: deque[dict[str, Any]] = deque(maxlen=100)
         self.api_cooldowns: dict[str, float] = {}
@@ -951,14 +953,14 @@ class BinanceMonitor:
         config = self.config
         ready_error = self._api_ready_error()
         if not config.api_trading_enabled:
-            if ready_error is None and not await self._sync_api_account_state():
+            if ready_error is None and not await self._sync_api_account_state_if_due():
                 return
             self.api_status = self._api_status("未开启，不会下单", enabled=False)
             return
         if ready_error:
             self.api_status = self._api_status(ready_error, ready=False)
             return
-        if not await self._sync_api_account_state():
+        if not await self._sync_api_account_state_if_due(force=not bool(self.api_account)):
             return
         row_map = {row["symbol"]: row for row in rows}
         for symbol, position in list(self.api_positions.items()):
@@ -975,13 +977,13 @@ class BinanceMonitor:
         ready_error = self._api_ready_error()
         if not config.api_trading_enabled:
             if ready_error is None:
-                await self._sync_api_account_state()
+                await self._sync_api_account_state_if_due()
             self.api_status = self._api_status("未开启，不会下单", enabled=False)
             return
         if ready_error:
             self.api_status = self._api_status(ready_error, ready=False)
             return
-        if await self._sync_api_account_state():
+        if await self._sync_api_account_state_if_due(force=not bool(self.api_account)):
             self.api_status = self._api_status(active_message, ready=True)
 
     def _api_ready_error(self) -> str | None:
@@ -1315,6 +1317,11 @@ class BinanceMonitor:
     async def _api_set_leverage(self, symbol: str) -> None:
         await self._api_signed_request("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": self.config.api_leverage})
 
+    async def _sync_api_account_state_if_due(self, force: bool = False) -> bool:
+        if not force and self.api_account and time.time() - self.api_account_synced_at < self.config.api_account_sync_seconds:
+            return True
+        return await self._sync_api_account_state()
+
     async def _sync_api_account_state(self) -> bool:
         try:
             account, positions = await asyncio.gather(
@@ -1356,6 +1363,7 @@ class BinanceMonitor:
                 }
             )
         self.api_exchange_positions = sorted(active_positions, key=lambda item: item["notional"], reverse=True)
+        self.api_account_synced_at = time.time()
         return True
 
     async def _api_signed_request(self, method: str, path: str, params: dict[str, Any]) -> Any:
@@ -1465,6 +1473,7 @@ class BinanceMonitor:
                 "dailyLossLimitPct": self.config.api_daily_loss_limit_pct,
                 "maxConsecutiveLosses": self.config.api_max_consecutive_losses,
                 "lossPauseMinutes": self.config.api_loss_pause_minutes,
+                "accountSyncSeconds": self.config.api_account_sync_seconds,
                 "dailyPnl": self._api_daily_pnl(),
                 "dailyPnlPct": self._api_daily_pnl_pct(),
                 "consecutiveLosses": self.api_consecutive_losses,
@@ -1761,6 +1770,7 @@ def api_config_changed(old_config: MonitorConfig, new_config: MonitorConfig) -> 
         "api_daily_loss_limit_pct",
         "api_max_consecutive_losses",
         "api_loss_pause_minutes",
+        "api_account_sync_seconds",
     }
     return any(getattr(old_config, field) != getattr(new_config, field) for field in api_fields)
 

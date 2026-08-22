@@ -65,6 +65,7 @@ const fields = {
   apiDailyLossLimit: document.querySelector("#apiDailyLossLimit"),
   apiMaxLossStreak: document.querySelector("#apiMaxLossStreak"),
   apiLossPauseMinutes: document.querySelector("#apiLossPauseMinutes"),
+  apiAccountSyncSeconds: document.querySelector("#apiAccountSyncSeconds"),
   apiKeyInput: document.querySelector("#apiKeyInput"),
   apiSecretInput: document.querySelector("#apiSecretInput"),
   apiLiveConfirm: document.querySelector("#apiLiveConfirm"),
@@ -171,6 +172,7 @@ function syncConfigFields(config) {
   syncValue(fields.apiDailyLossLimit, config.api_daily_loss_limit_pct);
   syncValue(fields.apiMaxLossStreak, config.api_max_consecutive_losses);
   syncValue(fields.apiLossPauseMinutes, config.api_loss_pause_minutes);
+  syncValue(fields.apiAccountSyncSeconds, config.api_account_sync_seconds);
   syncDependentSettingState();
 }
 
@@ -364,6 +366,7 @@ function renderApi() {
     : (settings.maxNotionalPerTrade > 0 ? `${moneyFull(settings.maxNotionalPerTrade)} USDT` : "不限制");
   document.querySelector("#apiParamMaxOpen").textContent = settings.maxOpenPositions === undefined ? "-" : settings.maxOpenPositions;
   document.querySelector("#apiParamLeverage").textContent = settings.leverage === undefined ? "-" : `${settings.leverage}x`;
+  document.querySelector("#apiAccountSyncSecondsView").textContent = settings.accountSyncSeconds === undefined ? "-" : `${settings.accountSyncSeconds}s`;
   document.querySelector("#apiSignalOi").textContent = settings.oi5mThreshold === undefined ? "-" : `${settings.oi5mThreshold}%`;
   document.querySelector("#apiSignalVolume").textContent = settings.volumeMultipleThreshold === undefined ? "-" : `${settings.volumeMultipleThreshold}x`;
   document.querySelector("#apiSignalStrength").textContent = settings.signalStrengthThreshold === undefined ? "-" : settings.signalStrengthThreshold;
@@ -609,6 +612,7 @@ async function saveConfig(saveButton) {
     api_daily_loss_limit_pct: Number(fields.apiDailyLossLimit.value),
     api_max_consecutive_losses: Number(fields.apiMaxLossStreak.value),
     api_loss_pause_minutes: Number(fields.apiLossPauseMinutes.value),
+    api_account_sync_seconds: Number(fields.apiAccountSyncSeconds.value),
     binance_api_key: fields.apiKeyInput.value.trim(),
     binance_api_secret: fields.apiSecretInput.value.trim(),
     binance_live_trading_confirm: fields.apiLiveConfirm.value.trim(),
