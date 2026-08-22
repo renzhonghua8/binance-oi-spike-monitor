@@ -13,6 +13,7 @@ const state = {
   liveUnlocked: Boolean(sessionStorage.getItem("liveAccessToken")),
   liveToken: sessionStorage.getItem("liveAccessToken") || "",
   events: null,
+  streamReconnectTimer: null,
   isLivePage: window.location.pathname.startsWith("/live"),
 };
 
@@ -90,8 +91,19 @@ function initStream() {
   if (state.events) state.events.close();
   const suffix = state.liveToken ? `?live_token=${encodeURIComponent(state.liveToken)}` : "";
   state.events = new EventSource(`/events${suffix}`);
-  state.events.onmessage = (event) => applySnapshot(JSON.parse(event.data));
-  state.events.onerror = () => setStatus(false, "SSE重连中");
+  state.events.onopen = () => {
+    clearTimeout(state.streamReconnectTimer);
+    state.streamReconnectTimer = null;
+  };
+  state.events.onmessage = (event) => {
+    clearTimeout(state.streamReconnectTimer);
+    state.streamReconnectTimer = null;
+    applySnapshot(JSON.parse(event.data));
+  };
+  state.events.onerror = () => {
+    clearTimeout(state.streamReconnectTimer);
+    state.streamReconnectTimer = setTimeout(() => setStatus(false, "SSE重连中"), 5000);
+  };
 }
 
 function applySnapshot(snapshot) {

@@ -2042,10 +2042,20 @@ async def api_live_unlock(payload: dict[str, Any]) -> dict[str, Any]:
 @app.get("/events")
 async def events(request: Request) -> StreamingResponse:
     async def stream():
+        yield "retry: 5000\n\n"
         while True:
+            if await request.is_disconnected():
+                break
             token = request.query_params.get("live_token", "")
             payload = await monitor.snapshot(include_api_details=live_access_token_valid(token))
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             await asyncio.sleep(3)
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
