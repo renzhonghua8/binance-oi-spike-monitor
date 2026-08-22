@@ -34,6 +34,7 @@ const fields = {
   apiTradingTestnet: document.querySelector("#apiTradingTestnet"),
   apiLongEnabled: document.querySelector("#apiLongEnabled"),
   apiShortEnabled: document.querySelector("#apiShortEnabled"),
+  apiEquityRiskPct: document.querySelector("#apiEquityRiskPct"),
   apiMaxNotional: document.querySelector("#apiMaxNotional"),
   apiMaxOpen: document.querySelector("#apiMaxOpen"),
   apiLeverage: document.querySelector("#apiLeverage"),
@@ -112,6 +113,7 @@ function syncConfigFields(config) {
   syncChecked(fields.apiTradingTestnet, Boolean(config.api_trading_testnet));
   syncChecked(fields.apiLongEnabled, Boolean(config.api_trading_long_enabled));
   syncChecked(fields.apiShortEnabled, Boolean(config.api_trading_short_enabled));
+  syncValue(fields.apiEquityRiskPct, config.api_equity_risk_pct);
   syncValue(fields.apiMaxNotional, config.api_max_notional_per_trade);
   syncValue(fields.apiMaxOpen, config.api_max_open_positions);
   syncValue(fields.apiLeverage, config.api_leverage);
@@ -302,6 +304,7 @@ function renderApi() {
   document.querySelector("#apiParamEnabled").textContent = settings.tradingEnabled ? "开启" : "关闭";
   document.querySelector("#apiParamEnabled").className = settings.tradingEnabled ? "up" : "";
   document.querySelector("#apiParamSides").textContent = sides;
+  document.querySelector("#apiParamRiskPct").textContent = settings.equityRiskPct === undefined ? "-" : `${settings.equityRiskPct}%`;
   document.querySelector("#apiParamNotional").textContent = settings.maxNotionalPerTrade === undefined ? "-" : `${moneyFull(settings.maxNotionalPerTrade)} USDT`;
   document.querySelector("#apiParamMaxOpen").textContent = settings.maxOpenPositions === undefined ? "-" : settings.maxOpenPositions;
   document.querySelector("#apiParamLeverage").textContent = settings.leverage === undefined ? "-" : `${settings.leverage}x`;
@@ -486,6 +489,7 @@ async function saveConfig(saveButton) {
     api_trading_testnet: fields.apiTradingTestnet.checked,
     api_trading_long_enabled: fields.apiLongEnabled.checked,
     api_trading_short_enabled: fields.apiShortEnabled.checked,
+    api_equity_risk_pct: Number(fields.apiEquityRiskPct.value),
     api_max_notional_per_trade: Number(fields.apiMaxNotional.value),
     api_max_open_positions: Number(fields.apiMaxOpen.value),
     api_leverage: Number(fields.apiLeverage.value),

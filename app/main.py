@@ -98,6 +98,7 @@ class MonitorConfig(BaseModel):
     api_trading_testnet: bool = env_bool("API_TRADING_TESTNET", True)
     api_trading_long_enabled: bool = env_bool("API_TRADING_LONG_ENABLED", True)
     api_trading_short_enabled: bool = env_bool("API_TRADING_SHORT_ENABLED", False)
+    api_equity_risk_pct: float = Field(default=env_float("API_EQUITY_RISK_PCT", 1.0), ge=0.1, le=20)
     api_max_notional_per_trade: float = Field(default=env_float("API_MAX_NOTIONAL_PER_TRADE", 20.0), ge=5, le=10_000)
     api_max_open_positions: int = Field(default=env_int("API_MAX_OPEN_POSITIONS", 1), ge=1, le=10)
     api_leverage: int = Field(default=env_int("API_LEVERAGE", 1), ge=1, le=20)
@@ -963,6 +964,13 @@ class BinanceMonitor:
             "updatedAt": iso_now(),
         }
 
+    def _api_account_equity(self) -> float:
+        for key in ("totalMarginBalance", "totalWalletBalance", "availableBalance"):
+            value = float(self.api_account.get(key) or 0)
+            if value > 0:
+                return value
+        return 0.0
+
     async def _maybe_open_api_position(self, row: dict[str, Any]) -> None:
         config = self.config
         symbol = row["symbol"]
@@ -993,7 +1001,12 @@ class BinanceMonitor:
         risk_factor = roll_setup["riskFactor"] if roll_setup else 1.0
         stop_loss_pct_value = config.paper_roll_stop_loss_pct if roll_setup else config.paper_stop_loss_pct
         take_profit_pct_value = config.paper_take_profit_pct
-        notional = config.api_max_notional_per_trade * risk_factor
+        equity = self._api_account_equity()
+        if equity <= 0:
+            self.api_status = self._api_status(f"{symbol} 无法读取账户权益，暂不开仓", ready=True)
+            return
+        base_notional = equity * (config.api_equity_risk_pct / 100)
+        notional = min(base_notional * risk_factor, config.api_max_notional_per_trade)
         qty_text = self._api_quantity(symbol, notional / latest_price)
         if qty_text is None:
             self.api_status = self._api_status(f"{symbol} 数量低于交易所最小值", ready=True)
@@ -1292,6 +1305,7 @@ class BinanceMonitor:
                 "testnet": self.config.api_trading_testnet,
                 "longEnabled": self.config.api_trading_long_enabled,
                 "shortEnabled": self.config.api_trading_short_enabled,
+                "equityRiskPct": self.config.api_equity_risk_pct,
                 "maxNotionalPerTrade": self.config.api_max_notional_per_trade,
                 "maxOpenPositions": self.config.api_max_open_positions,
                 "leverage": self.config.api_leverage,
@@ -1558,6 +1572,7 @@ def api_config_changed(old_config: MonitorConfig, new_config: MonitorConfig) -> 
         "api_trading_testnet",
         "api_trading_long_enabled",
         "api_trading_short_enabled",
+        "api_equity_risk_pct",
         "api_max_notional_per_trade",
         "api_max_open_positions",
         "api_leverage",
