@@ -142,6 +142,8 @@ class BinanceMonitor:
         self.runtime_api_key = ""
         self.runtime_api_secret = ""
         self.runtime_live_trading_confirm = ""
+        self.api_time_offset_ms = 0
+        self.api_time_synced_at = 0.0
         self.api_status: dict[str, Any] = {
             "enabled": False,
             "ready": False,
@@ -1184,7 +1186,8 @@ class BinanceMonitor:
         base_url = BINANCE_TESTNET_FAPI if self.config.api_trading_testnet else BINANCE_FAPI
         api_key = self._api_key()
         api_secret = self._api_secret()
-        signed_params = {**params, "timestamp": int(time.time() * 1000), "recvWindow": 5000}
+        timestamp = await self._api_timestamp_ms(base_url)
+        signed_params = {**params, "timestamp": timestamp, "recvWindow": 10_000}
         query = urlencode(signed_params)
         signature = hmac.new(api_secret.encode(), query.encode(), hashlib.sha256).hexdigest()
         headers = {"X-MBX-APIKEY": api_key, "Content-Type": "application/x-www-form-urlencoded"}
@@ -1196,6 +1199,19 @@ class BinanceMonitor:
                 response = await client.get(f"{base_url}{path}?{query}&signature={signature}")
             response.raise_for_status()
             return response.json()
+
+    async def _api_timestamp_ms(self, base_url: str) -> int:
+        now = time.time()
+        if now - self.api_time_synced_at > 300:
+            timeout = httpx.Timeout(5.0, connect=3.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(f"{base_url}/fapi/v1/time")
+                response.raise_for_status()
+                server_time = int(response.json()["serverTime"])
+            local_time = int(time.time() * 1000)
+            self.api_time_offset_ms = server_time - local_time
+            self.api_time_synced_at = now
+        return int(time.time() * 1000) + self.api_time_offset_ms
 
     def _api_key(self) -> str:
         return self.runtime_api_key or BINANCE_API_KEY
