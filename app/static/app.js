@@ -515,9 +515,7 @@ async function saveConfig(saveButton) {
   state.settingsDirty = false;
   state.dirtyFieldIds.clear();
   state.saving = false;
-  if (snapshot.config) {
-    syncConfigFields(snapshot.config);
-  }
+  applySnapshot(snapshot);
   fields.apiKeyInput.value = "";
   fields.apiSecretInput.value = "";
   fields.apiLiveConfirm.value = "";
