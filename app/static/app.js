@@ -278,8 +278,13 @@ function renderApi() {
   if (!api) return;
   setLiveUnlocked(Boolean(api.detailsUnlocked));
   document.querySelector("#apiMode").textContent = api.mode === "testnet" ? "Testnet" : "主网";
-  document.querySelector("#apiStatus").textContent = `${api.enabled ? api.message : "未开启"}`;
+  const apiMessage = api.enabled ? api.message : "未开启";
+  const apiHasError = Boolean(api.enabled && !api.ready && apiMessage && apiMessage !== "未开启");
+  document.querySelector("#apiStatus").textContent = apiHasError ? "同步失败" : apiMessage;
   document.querySelector("#apiStatus").className = api.ready ? "up" : api.enabled ? "down" : "";
+  const errorDetail = document.querySelector("#apiErrorDetail");
+  errorDetail.textContent = apiHasError ? apiMessage : "";
+  errorDetail.classList.toggle("hidden", !apiHasError);
   document.querySelector("#apiKeys").textContent = api.hasKeys ? `已配置（${api.keySource || "未知"}）` : "未配置";
   document.querySelector("#apiKeys").className = api.hasKeys ? "up" : "down";
   const account = api.account || {};

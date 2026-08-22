@@ -456,6 +456,8 @@ td b {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
   padding: 12px 14px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -469,6 +471,24 @@ td b {
 
 .paperStats strong {
   font-size: 17px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: right;
+  line-height: 1.25;
+}
+
+.apiErrorDetail {
+  margin: -2px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 92, 115, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 92, 115, 0.08);
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .paperTables {

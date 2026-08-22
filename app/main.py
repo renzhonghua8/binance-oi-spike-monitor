@@ -997,7 +997,7 @@ class BinanceMonitor:
                 },
             )
         except Exception as exc:
-            self.api_status = self._api_status(f"{symbol} 开仓失败: {type(exc).__name__}: {exc}", ready=True)
+            self.api_status = self._api_status(f"{symbol} 开仓失败: {format_api_exception(exc)}", ready=True)
             return
         entry_price = api_order_price(order, latest_price)
         qty = float(qty_text)
@@ -1111,7 +1111,7 @@ class BinanceMonitor:
                 },
             )
         except Exception as exc:
-            self.api_status = self._api_status(f"{symbol} 平仓失败: {type(exc).__name__}: {exc}", ready=True)
+            self.api_status = self._api_status(f"{symbol} 平仓失败: {format_api_exception(exc)}", ready=True)
             return
         exit_price = api_order_price(order, latest_price)
         side_mult = 1 if position["side"] == "long" else -1
@@ -1159,7 +1159,7 @@ class BinanceMonitor:
                 self._api_signed_request("GET", "/fapi/v2/positionRisk", {}),
             )
         except Exception as exc:
-            self.api_status = self._api_status(f"同步交易所账户失败: {type(exc).__name__}: {exc}", ready=False)
+            self.api_status = self._api_status(f"同步交易所账户失败: {format_api_exception(exc)}", ready=False)
             return False
         self.api_account = {
             "totalWalletBalance": float(account.get("totalWalletBalance") or 0),
@@ -1542,6 +1542,21 @@ def api_config_changed(old_config: MonitorConfig, new_config: MonitorConfig) -> 
         "api_leverage",
     }
     return any(getattr(old_config, field) != getattr(new_config, field) for field in api_fields)
+
+
+def format_api_exception(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        response = exc.response
+        try:
+            data = response.json()
+        except ValueError:
+            data = {}
+        code = data.get("code")
+        msg = data.get("msg") or response.text
+        if code is not None or msg:
+            return f"HTTP {response.status_code} / code {code}: {msg}"
+        return f"HTTP {response.status_code}: {response.reason_phrase}"
+    return f"{type(exc).__name__}: {exc}"
 
 
 def admin_key_valid(admin_key: str) -> bool:
