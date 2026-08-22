@@ -27,6 +27,15 @@ const fields = {
   klineTopSymbols: document.querySelector("#klineTopSymbols"),
   minVolume: document.querySelector("#minVolume"),
   refreshSeconds: document.querySelector("#refreshSeconds"),
+  stopLossPct: document.querySelector("#stopLossPct"),
+  takeProfitPct: document.querySelector("#takeProfitPct"),
+  maxHoldMinutes: document.querySelector("#maxHoldMinutes"),
+  reentryCooldownMinutes: document.querySelector("#reentryCooldownMinutes"),
+  breakevenTriggerPct: document.querySelector("#breakevenTriggerPct"),
+  trailingTriggerPct: document.querySelector("#trailingTriggerPct"),
+  trailingProtectRatio: document.querySelector("#trailingProtectRatio"),
+  maxRollEntries: document.querySelector("#maxRollEntries"),
+  rollStopLossPct: document.querySelector("#rollStopLossPct"),
   dailyLossLimit: document.querySelector("#dailyLossLimit"),
   maxLossStreak: document.querySelector("#maxLossStreak"),
   lossPauseMinutes: document.querySelector("#lossPauseMinutes"),
@@ -106,6 +115,15 @@ function syncConfigFields(config) {
   syncValue(fields.klineTopSymbols, config.kline_top_symbols);
   syncValue(fields.minVolume, config.min_24h_quote_volume);
   syncValue(fields.refreshSeconds, config.refresh_seconds);
+  syncValue(fields.stopLossPct, config.paper_stop_loss_pct);
+  syncValue(fields.takeProfitPct, config.paper_take_profit_pct);
+  syncValue(fields.maxHoldMinutes, config.paper_max_hold_minutes);
+  syncValue(fields.reentryCooldownMinutes, config.paper_reentry_cooldown_minutes);
+  syncValue(fields.breakevenTriggerPct, config.paper_breakeven_trigger_pct);
+  syncValue(fields.trailingTriggerPct, config.paper_trailing_trigger_pct);
+  syncValue(fields.trailingProtectRatio, config.paper_trailing_protect_ratio);
+  syncValue(fields.maxRollEntries, config.paper_max_roll_entries);
+  syncValue(fields.rollStopLossPct, config.paper_roll_stop_loss_pct);
   syncValue(fields.dailyLossLimit, config.paper_daily_loss_limit_pct);
   syncValue(fields.maxLossStreak, config.paper_max_consecutive_losses);
   syncValue(fields.lossPauseMinutes, config.paper_loss_pause_minutes);
@@ -310,6 +328,15 @@ function renderApi() {
     : (settings.maxNotionalPerTrade > 0 ? `${moneyFull(settings.maxNotionalPerTrade)} USDT` : "不限制");
   document.querySelector("#apiParamMaxOpen").textContent = settings.maxOpenPositions === undefined ? "-" : settings.maxOpenPositions;
   document.querySelector("#apiParamLeverage").textContent = settings.leverage === undefined ? "-" : `${settings.leverage}x`;
+  document.querySelector("#apiRiskStopLoss").textContent = settings.stopLossPct === undefined ? "-" : `${settings.stopLossPct}%`;
+  document.querySelector("#apiRiskTakeProfit").textContent = settings.takeProfitPct === undefined ? "-" : `${settings.takeProfitPct}%`;
+  document.querySelector("#apiRiskMaxHold").textContent = settings.maxHoldMinutes === undefined ? "-" : `${settings.maxHoldMinutes}m`;
+  document.querySelector("#apiRiskCooldown").textContent = settings.reentryCooldownMinutes === undefined ? "-" : `${settings.reentryCooldownMinutes}m`;
+  document.querySelector("#apiRiskBreakeven").textContent = settings.breakevenTriggerPct === undefined ? "-" : `${settings.breakevenTriggerPct}%`;
+  document.querySelector("#apiRiskTrailing").textContent = settings.trailingTriggerPct === undefined ? "-" : `${settings.trailingTriggerPct}%`;
+  document.querySelector("#apiRiskProtectRatio").textContent = settings.trailingProtectRatio === undefined ? "-" : settings.trailingProtectRatio;
+  document.querySelector("#apiRiskRolls").textContent = settings.maxRollEntries === undefined ? "-" : settings.maxRollEntries;
+  document.querySelector("#apiRiskRollStop").textContent = settings.rollStopLossPct === undefined ? "-" : `${settings.rollStopLossPct}%`;
   document.querySelector("#apiOpen").textContent = api.openCount || 0;
   document.querySelector("#apiExchangeOpen").textContent = (api.exchangePositions || []).length;
   document.querySelector("#apiClosed").textContent = api.closedCount || 0;
@@ -484,6 +511,15 @@ async function saveConfig(saveButton) {
     kline_top_symbols: Number(fields.klineTopSymbols.value),
     min_24h_quote_volume: Number(fields.minVolume.value),
     refresh_seconds: Number(fields.refreshSeconds.value),
+    paper_stop_loss_pct: Number(fields.stopLossPct.value),
+    paper_take_profit_pct: Number(fields.takeProfitPct.value),
+    paper_max_hold_minutes: Number(fields.maxHoldMinutes.value),
+    paper_reentry_cooldown_minutes: Number(fields.reentryCooldownMinutes.value),
+    paper_breakeven_trigger_pct: Number(fields.breakevenTriggerPct.value),
+    paper_trailing_trigger_pct: Number(fields.trailingTriggerPct.value),
+    paper_trailing_protect_ratio: Number(fields.trailingProtectRatio.value),
+    paper_max_roll_entries: Number(fields.maxRollEntries.value),
+    paper_roll_stop_loss_pct: Number(fields.rollStopLossPct.value),
     paper_daily_loss_limit_pct: Number(fields.dailyLossLimit.value),
     paper_max_consecutive_losses: Number(fields.maxLossStreak.value),
     paper_loss_pause_minutes: Number(fields.lossPauseMinutes.value),

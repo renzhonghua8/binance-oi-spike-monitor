@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Binance U本位合约 OI 异动监控</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260822-10" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260822-11" />
   </head>
   <body>
     <main class="app">
@@ -85,10 +85,46 @@
         </div>
         <div class="settingGroup">
           <div class="groupCopy">
-            <h3>模拟风控</h3>
-            <p>控制模拟交易和 API 新开仓的停机保护；已有持仓仍会继续止盈止损。</p>
+            <h3>交易风控</h3>
+            <p>同时影响模拟交易和 API 实盘新开仓；已有持仓仍会继续止盈止损。</p>
           </div>
           <div class="controls">
+            <label>
+              <span>首仓止损 %</span>
+              <input id="stopLossPct" type="number" min="0.1" max="20" step="0.1" />
+            </label>
+            <label>
+              <span>止盈 %</span>
+              <input id="takeProfitPct" type="number" min="0.1" max="50" step="0.1" />
+            </label>
+            <label>
+              <span>最大持仓 分钟</span>
+              <input id="maxHoldMinutes" type="number" min="1" max="240" step="1" />
+            </label>
+            <label>
+              <span>止损后冷却 分钟</span>
+              <input id="reentryCooldownMinutes" type="number" min="0" max="120" step="1" />
+            </label>
+            <label>
+              <span>保本触发 %</span>
+              <input id="breakevenTriggerPct" type="number" min="0.1" max="20" step="0.1" />
+            </label>
+            <label>
+              <span>移动止损触发 %</span>
+              <input id="trailingTriggerPct" type="number" min="0.1" max="30" step="0.1" />
+            </label>
+            <label>
+              <span>移动保护比例</span>
+              <input id="trailingProtectRatio" type="number" min="0.1" max="0.95" step="0.05" />
+            </label>
+            <label>
+              <span>最大滚仓次数</span>
+              <input id="maxRollEntries" type="number" min="0" max="5" step="1" />
+            </label>
+            <label>
+              <span>滚仓止损 %</span>
+              <input id="rollStopLossPct" type="number" min="0.1" max="10" step="0.1" />
+            </label>
             <label>
               <span>今日亏损停机 %</span>
               <input id="dailyLossLimit" type="number" min="0.1" max="50" step="0.1" />
@@ -238,6 +274,17 @@
             <div><span>最大同时持仓</span><strong id="apiParamMaxOpen">-</strong></div>
             <div><span>杠杆</span><strong id="apiParamLeverage">-</strong></div>
             <div><span>账户更新时间</span><strong id="apiAccountUpdatedAt">-</strong></div>
+          </div>
+          <div class="paperStats liveRiskParams">
+            <div><span>首仓止损</span><strong id="apiRiskStopLoss">-</strong></div>
+            <div><span>止盈</span><strong id="apiRiskTakeProfit">-</strong></div>
+            <div><span>最大持仓</span><strong id="apiRiskMaxHold">-</strong></div>
+            <div><span>止损冷却</span><strong id="apiRiskCooldown">-</strong></div>
+            <div><span>保本触发</span><strong id="apiRiskBreakeven">-</strong></div>
+            <div><span>移动止损</span><strong id="apiRiskTrailing">-</strong></div>
+            <div><span>保护比例</span><strong id="apiRiskProtectRatio">-</strong></div>
+            <div><span>滚仓次数</span><strong id="apiRiskRolls">-</strong></div>
+            <div><span>滚仓止损</span><strong id="apiRiskRollStop">-</strong></div>
           </div>
           <div class="paperTables">
             <div class="paperPanel positionsPanel">
@@ -456,6 +503,6 @@
         </table>
       </section>
     </main>
-    <script src="/static/app.js?v=20260822-10"></script>
+    <script src="/static/app.js?v=20260822-11"></script>
   </body>
 </html>
