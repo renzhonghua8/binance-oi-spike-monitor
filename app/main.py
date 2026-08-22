@@ -135,6 +135,7 @@ class BinanceMonitor:
         self.paper_consecutive_losses = 0
         self.paper_pause_until = 0.0
         self.api_positions: dict[str, dict[str, Any]] = {}
+        self.api_account: dict[str, Any] = {}
         self.api_exchange_positions: list[dict[str, Any]] = []
         self.api_trades: deque[dict[str, Any]] = deque(maxlen=200)
         self.api_cooldowns: dict[str, float] = {}
@@ -911,14 +912,14 @@ class BinanceMonitor:
         config = self.config
         ready_error = self._api_ready_error()
         if not config.api_trading_enabled:
-            if ready_error is None and not await self._sync_api_exchange_positions():
+            if ready_error is None and not await self._sync_api_account_state():
                 return
             self.api_status = self._api_status("未开启，不会下单", enabled=False)
             return
         if ready_error:
             self.api_status = self._api_status(ready_error, ready=False)
             return
-        if not await self._sync_api_exchange_positions():
+        if not await self._sync_api_account_state():
             return
         row_map = {row["symbol"]: row for row in rows}
         for symbol, position in list(self.api_positions.items()):
@@ -1151,12 +1152,24 @@ class BinanceMonitor:
     async def _api_set_leverage(self, symbol: str) -> None:
         await self._api_signed_request("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": self.config.api_leverage})
 
-    async def _sync_api_exchange_positions(self) -> bool:
+    async def _sync_api_account_state(self) -> bool:
         try:
-            positions = await self._api_signed_request("GET", "/fapi/v2/positionRisk", {})
+            account, positions = await asyncio.gather(
+                self._api_signed_request("GET", "/fapi/v2/account", {}),
+                self._api_signed_request("GET", "/fapi/v2/positionRisk", {}),
+            )
         except Exception as exc:
-            self.api_status = self._api_status(f"同步交易所持仓失败: {type(exc).__name__}: {exc}", ready=False)
+            self.api_status = self._api_status(f"同步交易所账户失败: {type(exc).__name__}: {exc}", ready=False)
             return False
+        self.api_account = {
+            "totalWalletBalance": float(account.get("totalWalletBalance") or 0),
+            "availableBalance": float(account.get("availableBalance") or 0),
+            "totalMarginBalance": float(account.get("totalMarginBalance") or 0),
+            "totalUnrealizedProfit": float(account.get("totalUnrealizedProfit") or 0),
+            "totalMaintMargin": float(account.get("totalMaintMargin") or 0),
+            "maxWithdrawAmount": float(account.get("maxWithdrawAmount") or 0),
+            "updatedAt": iso_now(),
+        }
         active_positions = []
         for item in positions:
             amount = float(item.get("positionAmt") or 0)
@@ -1253,6 +1266,16 @@ class BinanceMonitor:
             "adminKeyProtected": bool(ADMIN_ACTION_KEY),
             "liveAccessProtected": bool(LIVE_TRADING_ACCESS_KEY),
             "detailsUnlocked": include_details,
+            "settings": {
+                "tradingEnabled": self.config.api_trading_enabled,
+                "testnet": self.config.api_trading_testnet,
+                "longEnabled": self.config.api_trading_long_enabled,
+                "shortEnabled": self.config.api_trading_short_enabled,
+                "maxNotionalPerTrade": self.config.api_max_notional_per_trade,
+                "maxOpenPositions": self.config.api_max_open_positions,
+                "leverage": self.config.api_leverage,
+            } if include_details else {},
+            "account": self.api_account if include_details else {},
             "openCount": len(self.api_positions),
             "closedCount": len(self.api_trades),
             "exchangePositions": self.api_exchange_positions if include_details else [],

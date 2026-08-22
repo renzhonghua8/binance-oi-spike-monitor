@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Binance U本位合约 OI 异动监控</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260822-3" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260822-4" />
   </head>
   <body>
     <main class="app">
@@ -217,9 +217,21 @@
             <div><span>模式</span><strong id="apiMode">-</strong></div>
             <div><span>状态</span><strong id="apiStatus">-</strong></div>
             <div><span>API Key</span><strong id="apiKeys">-</strong></div>
+            <div><span>钱包余额 USDT</span><strong id="apiWalletBalance">-</strong></div>
+            <div><span>可用余额 USDT</span><strong id="apiAvailableBalance">-</strong></div>
+            <div><span>保证金余额 USDT</span><strong id="apiMarginBalance">-</strong></div>
+            <div><span>未实现盈亏 USDT</span><strong id="apiUnrealizedPnl">-</strong></div>
             <div><span>程序持仓</span><strong id="apiOpen">0</strong></div>
             <div><span>交易所持仓</span><strong id="apiExchangeOpen">0</strong></div>
             <div><span>已平仓</span><strong id="apiClosed">0</strong></div>
+          </div>
+          <div class="paperStats liveParams">
+            <div><span>自动下单</span><strong id="apiParamEnabled">-</strong></div>
+            <div><span>允许方向</span><strong id="apiParamSides">-</strong></div>
+            <div><span>每笔名义金额</span><strong id="apiParamNotional">-</strong></div>
+            <div><span>最大同时持仓</span><strong id="apiParamMaxOpen">-</strong></div>
+            <div><span>杠杆</span><strong id="apiParamLeverage">-</strong></div>
+            <div><span>账户更新时间</span><strong id="apiAccountUpdatedAt">-</strong></div>
           </div>
           <div class="paperTables">
             <div class="paperPanel positionsPanel">
@@ -438,6 +450,6 @@
         </table>
       </section>
     </main>
-    <script src="/static/app.js?v=20260822-3"></script>
+    <script src="/static/app.js?v=20260822-4"></script>
   </body>
 </html>

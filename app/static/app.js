@@ -282,6 +282,24 @@ function renderApi() {
   document.querySelector("#apiStatus").className = api.ready ? "up" : api.enabled ? "down" : "";
   document.querySelector("#apiKeys").textContent = api.hasKeys ? `已配置（${api.keySource || "未知"}）` : "未配置";
   document.querySelector("#apiKeys").className = api.hasKeys ? "up" : "down";
+  const account = api.account || {};
+  document.querySelector("#apiWalletBalance").textContent = account.totalWalletBalance === undefined ? "-" : moneyFull(account.totalWalletBalance);
+  document.querySelector("#apiAvailableBalance").textContent = account.availableBalance === undefined ? "-" : moneyFull(account.availableBalance);
+  document.querySelector("#apiMarginBalance").textContent = account.totalMarginBalance === undefined ? "-" : moneyFull(account.totalMarginBalance);
+  document.querySelector("#apiUnrealizedPnl").textContent = account.totalUnrealizedProfit === undefined ? "-" : moneyFull(account.totalUnrealizedProfit);
+  document.querySelector("#apiUnrealizedPnl").className = Number(account.totalUnrealizedProfit || 0) >= 0 ? "up" : "down";
+  document.querySelector("#apiAccountUpdatedAt").textContent = account.updatedAt || "-";
+  const settings = api.settings || {};
+  const sides = [
+    settings.longEnabled ? "做多" : "",
+    settings.shortEnabled ? "做空" : "",
+  ].filter(Boolean).join(" / ") || "未开启";
+  document.querySelector("#apiParamEnabled").textContent = settings.tradingEnabled ? "开启" : "关闭";
+  document.querySelector("#apiParamEnabled").className = settings.tradingEnabled ? "up" : "";
+  document.querySelector("#apiParamSides").textContent = sides;
+  document.querySelector("#apiParamNotional").textContent = settings.maxNotionalPerTrade === undefined ? "-" : `${moneyFull(settings.maxNotionalPerTrade)} USDT`;
+  document.querySelector("#apiParamMaxOpen").textContent = settings.maxOpenPositions === undefined ? "-" : settings.maxOpenPositions;
+  document.querySelector("#apiParamLeverage").textContent = settings.leverage === undefined ? "-" : `${settings.leverage}x`;
   document.querySelector("#apiOpen").textContent = api.openCount || 0;
   document.querySelector("#apiExchangeOpen").textContent = (api.exchangePositions || []).length;
   document.querySelector("#apiClosed").textContent = api.closedCount || 0;
