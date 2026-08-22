@@ -1052,6 +1052,13 @@ class BinanceMonitor:
             }
         )
 
+    def _api_exchange_position_symbols(self) -> set[str]:
+        return {
+            str(position.get("symbol"))
+            for position in self.api_exchange_positions
+            if position.get("symbol") and abs(float(position.get("amount") or 0)) > 0
+        }
+
     async def _maybe_open_api_position(self, row: dict[str, Any]) -> None:
         config = self.config
         symbol = row["symbol"]
@@ -1068,13 +1075,18 @@ class BinanceMonitor:
         if symbol in self.api_positions:
             self._record_api_skip(row, "程序已有同币种持仓", signal_direction)
             return
+        exchange_symbols = self._api_exchange_position_symbols()
+        if symbol in exchange_symbols:
+            self._record_api_skip(row, "交易所已有同币种持仓但未被程序接管，禁止重复开仓", signal_direction)
+            return
         if self._api_opening_paused():
             self._record_api_skip(row, self._api_pause_reason(), signal_direction)
             return
         if time.time() < self.api_cooldowns.get(symbol, 0):
             self._record_api_skip(row, "同币种冷却中", signal_direction)
             return
-        if len(self.api_positions) >= config.api_max_open_positions:
+        open_symbols = set(self.api_positions) | exchange_symbols
+        if len(open_symbols) >= config.api_max_open_positions:
             self._record_api_skip(row, "达到实盘最大同时持仓", signal_direction)
             return
         block_reasons = self._api_trade_block_reasons(row)
@@ -1434,6 +1446,11 @@ class BinanceMonitor:
         status["mode"] = "testnet" if self.config.api_trading_testnet else "live"
         if self.config.api_trading_enabled and status.get("message") in {"未开启", "未开启，不会下单"}:
             status["message"] = "等待账户同步"
+        unmanaged_positions = [
+            position
+            for position in self.api_exchange_positions
+            if position.get("symbol") not in self.api_positions
+        ]
         return {
             **status,
             "hasKeys": bool(self._api_key() and self._api_secret()),
@@ -1484,6 +1501,8 @@ class BinanceMonitor:
             "account": self.api_account if include_details else {},
             "openCount": len(self.api_positions),
             "closedCount": len(self.api_trades),
+            "unmanagedCount": len(unmanaged_positions),
+            "unmanagedExchangePositions": unmanaged_positions if include_details else [],
             "exchangePositions": self.api_exchange_positions if include_details else [],
             "positions": list(self.api_positions.values()) if include_details else [],
             "trades": list(self.api_trades)[:100] if include_details else [],

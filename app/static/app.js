@@ -387,7 +387,15 @@ function renderApi() {
   document.querySelector("#apiRiskPause").className = settings.openingPaused ? "down" : "up";
   document.querySelector("#apiOpen").textContent = api.openCount || 0;
   document.querySelector("#apiExchangeOpen").textContent = (api.exchangePositions || []).length;
+  document.querySelector("#apiUnmanagedOpen").textContent = api.unmanagedCount || 0;
+  document.querySelector("#apiUnmanagedOpen").className = api.unmanagedCount ? "down" : "up";
   document.querySelector("#apiClosed").textContent = api.closedCount || 0;
+  const unmanagedWarning = document.querySelector("#apiUnmanagedWarning");
+  const unmanagedPositions = api.unmanagedExchangePositions || [];
+  unmanagedWarning.textContent = unmanagedPositions.length
+    ? `交易所有 ${unmanagedPositions.length} 个持仓未被当前程序接管：${unmanagedPositions.map((position) => position.symbol).join(" / ")}。这些仓位不会按程序止盈止损；当前版本会禁止同币种重复开仓，请在 Binance 手动设置止损止盈或处理仓位。`
+    : "";
+  unmanagedWarning.classList.toggle("hidden", !unmanagedPositions.length);
 
   document.querySelector("#apiExchangePositions").innerHTML = (api.exchangePositions || [])
     .map((position) => `
