@@ -10,6 +10,9 @@ const state = {
   settingsDirty: false,
   dirtyFieldIds: new Set(),
   saving: false,
+  liveUnlocked: Boolean(sessionStorage.getItem("liveAccessToken")),
+  liveToken: sessionStorage.getItem("liveAccessToken") || "",
+  events: null,
 };
 
 const fields = {
@@ -43,9 +46,11 @@ const rowsEl = document.querySelector("#rows");
 const statusEl = document.querySelector("#status");
 
 function initStream() {
-  const events = new EventSource("/events");
-  events.onmessage = (event) => applySnapshot(JSON.parse(event.data));
-  events.onerror = () => setStatus(false, "SSE重连中");
+  if (state.events) state.events.close();
+  const suffix = state.liveToken ? `?live_token=${encodeURIComponent(state.liveToken)}` : "";
+  state.events = new EventSource(`/events${suffix}`);
+  state.events.onmessage = (event) => applySnapshot(JSON.parse(event.data));
+  state.events.onerror = () => setStatus(false, "SSE重连中");
 }
 
 function applySnapshot(snapshot) {
@@ -114,8 +119,8 @@ function syncChecked(field, value) {
 }
 
 function markSettingDirty(target) {
-  if (!target || !target.id || target.id === "adminKey") return;
-  if (!target.closest(".settings")) return;
+  if (!target || !target.id || target.id === "adminKey" || target.id === "liveAccessKey") return;
+  if (!target.closest(".settings") && !target.closest("#liveUnlocked")) return;
   state.settingsDirty = true;
   state.dirtyFieldIds.add(target.id);
   syncDependentSettingState();
@@ -256,13 +261,30 @@ function renderPaper() {
 function renderApi() {
   const api = state.api;
   if (!api) return;
+  setLiveUnlocked(Boolean(api.detailsUnlocked));
   document.querySelector("#apiMode").textContent = api.mode === "testnet" ? "Testnet" : "主网";
   document.querySelector("#apiStatus").textContent = `${api.enabled ? api.message : "未开启"}`;
   document.querySelector("#apiStatus").className = api.ready ? "up" : api.enabled ? "down" : "";
   document.querySelector("#apiKeys").textContent = api.hasKeys ? `已配置（${api.keySource || "未知"}）` : "未配置";
   document.querySelector("#apiKeys").className = api.hasKeys ? "up" : "down";
   document.querySelector("#apiOpen").textContent = api.openCount || 0;
+  document.querySelector("#apiExchangeOpen").textContent = (api.exchangePositions || []).length;
   document.querySelector("#apiClosed").textContent = api.closedCount || 0;
+
+  document.querySelector("#apiExchangePositions").innerHTML = (api.exchangePositions || [])
+    .map((position) => `
+      <tr>
+        <td class="symbol">${position.symbol}</td>
+        <td><span class="badge ${position.side === "long" ? "long" : "short"}">${position.side === "long" ? "做多" : "做空"}</span></td>
+        <td>${price(position.entryPrice)}</td>
+        <td>${price(position.markPrice)}</td>
+        <td>${Number(position.amount).toFixed(6)}</td>
+        <td>${moneyFull(position.notional)}</td>
+        <td class="${position.unrealizedPnl >= 0 ? "up" : "down"}">${moneyFull(position.unrealizedPnl)}</td>
+        <td>${position.leverage}x</td>
+      </tr>
+    `)
+    .join("");
 
   document.querySelector("#apiPositions").innerHTML = (api.positions || [])
     .map((position) => `
@@ -298,7 +320,7 @@ function renderAdminHint() {
   const hint = document.querySelector("#adminKeyHint");
   if (!hint || !state.api) return;
   hint.textContent = state.api.adminKeyProtected
-    ? "API真实交易参数受操作密钥保护；修改 API交易、Testnet、方向、金额、持仓、杠杆、密钥时必须输入操作密钥。"
+    ? "操作密钥就是服务器 .env 中的 ADMIN_ACTION_KEY；修改实盘交易、Testnet、方向、金额、持仓、杠杆、密钥时必须填写。"
     : "服务器未设置 ADMIN_ACTION_KEY，API真实交易参数暂未启用操作密钥保护。";
   hint.className = state.api.adminKeyProtected ? "dangerText" : "warningText";
 }
@@ -399,15 +421,15 @@ document.querySelectorAll("th[data-sort]").forEach((th) => {
 });
 
 ["pointerdown", "keydown", "input", "change"].forEach((eventName) => {
-  document.querySelector(".settings").addEventListener(
+  document.body.addEventListener(
     eventName,
     (event) => markSettingDirty(event.target),
     true,
   );
 });
 
-document.querySelector("#saveConfig").addEventListener("click", async () => {
-  const saveButton = document.querySelector("#saveConfig");
+async function saveConfig(saveButton) {
+  const idleText = saveButton.textContent;
   const payload = {
     monitor_all: fields.monitorAll.checked,
     top_symbols: Number(fields.topSymbols.value),
@@ -447,7 +469,7 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
     const message = error.detail || "保存失败";
     alert(message);
     setSaveStatus(message, "dangerTextInline");
-    saveButton.textContent = "保存设置";
+    saveButton.textContent = idleText;
     state.saving = false;
     return;
   }
@@ -465,10 +487,49 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
   saveButton.textContent = "已保存";
   setSaveStatus("保存成功，配置已生效", "successTextInline");
   setTimeout(() => {
-    saveButton.textContent = "保存设置";
+    saveButton.textContent = idleText;
     if (!state.settingsDirty) setSaveStatus("实时同步中", "");
   }, 1200);
+}
+
+document.querySelector("#saveConfig").addEventListener("click", async () => {
+  await saveConfig(document.querySelector("#saveConfig"));
 });
+
+document.querySelector("#saveLiveConfig").addEventListener("click", async () => {
+  await saveConfig(document.querySelector("#saveLiveConfig"));
+});
+
+document.querySelector("#unlockLive").addEventListener("click", async () => {
+  const status = document.querySelector("#liveUnlockStatus");
+  status.textContent = "验证中";
+  status.className = "";
+  const response = await fetch("/api/live/unlock", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ access_key: document.querySelector("#liveAccessKey").value }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    status.textContent = error.detail || "口令错误";
+    status.className = "dangerTextInline";
+    return;
+  }
+  const data = await response.json();
+  state.liveToken = data.token;
+  sessionStorage.setItem("liveAccessToken", data.token);
+  document.querySelector("#liveAccessKey").value = "";
+  status.textContent = "已解锁";
+  status.className = "successTextInline";
+  setLiveUnlocked(true);
+  initStream();
+});
+
+function setLiveUnlocked(unlocked) {
+  state.liveUnlocked = unlocked;
+  document.querySelector("#liveLocked").classList.toggle("hidden", unlocked);
+  document.querySelector("#liveUnlocked").classList.toggle("hidden", !unlocked);
+}
 
 fields.monitorAll.addEventListener("change", () => {
   syncDependentSettingState();

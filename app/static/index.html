@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Binance U本位合约 OI 异动监控</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260822-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260822-2" />
   </head>
   <body>
     <main class="app">
@@ -99,59 +99,6 @@
             </label>
           </div>
         </div>
-        <div class="settingGroup apiDanger">
-          <div class="groupCopy">
-            <h3>API真实交易</h3>
-            <p>开启API自动下单后，策略遇到强信号才会下单。允许做多/做空只是方向权限，不是手动下单按钮。</p>
-          </div>
-          <div class="controls">
-            <label class="toggle">
-              <span>开启API自动下单</span>
-              <input id="apiTradingEnabled" type="checkbox" />
-            </label>
-            <label class="toggle">
-              <span>使用Testnet测试网</span>
-              <input id="apiTradingTestnet" type="checkbox" />
-            </label>
-            <label class="toggle">
-              <span>允许API做多</span>
-              <input id="apiLongEnabled" type="checkbox" />
-            </label>
-            <label class="toggle">
-              <span>允许API做空</span>
-              <input id="apiShortEnabled" type="checkbox" />
-            </label>
-            <label>
-              <span>API每笔最大名义金额 USDT</span>
-              <input id="apiMaxNotional" type="number" min="5" max="10000" step="5" />
-            </label>
-            <label>
-              <span>API最多同时持仓</span>
-              <input id="apiMaxOpen" type="number" min="1" max="10" step="1" />
-            </label>
-            <label>
-              <span>API杠杆倍数</span>
-              <input id="apiLeverage" type="number" min="1" max="20" step="1" />
-            </label>
-            <label>
-              <span>Binance API Key 保存后生效</span>
-              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="可留空，留空则保持原配置" />
-            </label>
-            <label>
-              <span>Binance API Secret 保存后生效</span>
-              <input id="apiSecretInput" type="password" autocomplete="off" placeholder="可留空，留空则保持原配置" />
-            </label>
-            <label>
-              <span>主网确认短语 Testnet不用填</span>
-              <input id="apiLiveConfirm" type="password" autocomplete="off" placeholder="I_UNDERSTAND_REAL_MONEY" />
-            </label>
-            <label>
-              <span>操作密钥 修改API设置必填</span>
-              <input id="adminKey" type="password" autocomplete="off" placeholder="服务器 ADMIN_ACTION_KEY" />
-            </label>
-          </div>
-          <p class="dangerText" id="adminKeyHint">API交易参数受操作密钥保护；未输入正确密钥不能保存关键改动。</p>
-        </div>
       </section>
 
       <section class="summary">
@@ -185,55 +132,148 @@
         </div>
       </section>
 
-      <section class="paper">
+      <section class="liveGate" id="liveGate">
         <div class="sectionHead">
-          <h2>API交易</h2>
-          <span>默认 testnet；主网需要确认短语，真实订单会同步钉钉</span>
+          <h2>实盘交易</h2>
+          <span>独立入口；输入实盘口令后才显示真实交易设置和记录</span>
         </div>
-        <div class="paperStats">
-          <div><span>模式</span><strong id="apiMode">-</strong></div>
-          <div><span>状态</span><strong id="apiStatus">-</strong></div>
-          <div><span>API Key</span><strong id="apiKeys">-</strong></div>
-          <div><span>真实持仓</span><strong id="apiOpen">0</strong></div>
-          <div><span>已平仓</span><strong id="apiClosed">0</strong></div>
-        </div>
-        <div class="paperTables">
-          <div class="paperPanel positionsPanel">
-            <div class="miniHead">API当前持仓</div>
-            <div class="tableWrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>symbol</th>
-                    <th>方向</th>
-                    <th>入场</th>
-                    <th>数量</th>
-                    <th>止损</th>
-                    <th>止盈</th>
-                    <th>年龄</th>
-                  </tr>
-                </thead>
-                <tbody id="apiPositions"></tbody>
-              </table>
-            </div>
+        <div class="unlockPanel" id="liveLocked">
+          <div>
+            <h3>实盘入口已锁定</h3>
+            <p>用于保护 Binance API 设置、真实持仓和真实平仓记录。口令由服务器 `.env` 中的 `LIVE_TRADING_ACCESS_KEY` 控制；未设置时默认使用 `ADMIN_ACTION_KEY`。</p>
           </div>
-          <div class="paperPanel tradesPanel">
-            <div class="miniHead">API平仓记录</div>
-            <div class="tableWrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>时间</th>
-                    <th>symbol</th>
-                    <th>方向</th>
-                    <th>入场</th>
-                    <th>出场</th>
-                    <th>原因</th>
-                    <th>盈亏</th>
-                  </tr>
-                </thead>
-                <tbody id="apiTrades"></tbody>
-              </table>
+          <label>
+            <span>实盘入口口令</span>
+            <input id="liveAccessKey" type="password" autocomplete="off" placeholder="输入实盘口令" />
+          </label>
+          <button id="unlockLive">进入实盘</button>
+          <span id="liveUnlockStatus"></span>
+        </div>
+        <div class="liveUnlocked hidden" id="liveUnlocked">
+          <div class="settingGroup liveSettings">
+            <div class="groupCopy">
+              <h3>实盘参数</h3>
+              <p>开启后，策略遇到强信号才会下单。做多/做空只是方向权限，不是手动下单按钮。</p>
+            </div>
+            <div class="controls apiControls">
+              <label class="toggle">
+                <span>开启API自动下单</span>
+                <input id="apiTradingEnabled" type="checkbox" />
+              </label>
+              <label class="toggle">
+                <span>使用Testnet测试网</span>
+                <input id="apiTradingTestnet" type="checkbox" />
+              </label>
+              <label class="toggle">
+                <span>允许API做多</span>
+                <input id="apiLongEnabled" type="checkbox" />
+              </label>
+              <label class="toggle">
+                <span>允许API做空</span>
+                <input id="apiShortEnabled" type="checkbox" />
+              </label>
+              <label>
+                <span>API每笔最大名义金额 USDT</span>
+                <input id="apiMaxNotional" type="number" min="5" max="10000" step="5" />
+              </label>
+              <label>
+                <span>API最多同时持仓</span>
+                <input id="apiMaxOpen" type="number" min="1" max="10" step="1" />
+              </label>
+              <label>
+                <span>API杠杆倍数</span>
+                <input id="apiLeverage" type="number" min="1" max="20" step="1" />
+              </label>
+              <label class="wideField">
+                <span>Binance API Key</span>
+                <input id="apiKeyInput" type="password" autocomplete="off" placeholder="留空则保持当前 Key，可写在 .env" />
+              </label>
+              <label class="wideField">
+                <span>Binance API Secret</span>
+                <input id="apiSecretInput" type="password" autocomplete="off" placeholder="留空则保持当前 Secret，可写在 .env" />
+              </label>
+              <label class="wideField">
+                <span>主网确认短语</span>
+                <input id="apiLiveConfirm" type="password" autocomplete="off" placeholder="Testnet 不用填；主网填 I_UNDERSTAND_REAL_MONEY" />
+              </label>
+              <label>
+                <span>操作密钥</span>
+                <input id="adminKey" type="password" autocomplete="off" placeholder="ADMIN_ACTION_KEY" />
+              </label>
+              <button id="saveLiveConfig">保存实盘设置</button>
+            </div>
+            <p class="dangerText" id="adminKeyHint">API交易参数受操作密钥保护；未输入正确密钥不能保存关键改动。</p>
+          </div>
+          <div class="sectionHead liveHead">
+            <h2>实盘状态</h2>
+            <span>容器重启不会恢复程序内存中的 API 持仓记录；长期实盘请将密钥写入 .env，并重启前确认交易所仓位。</span>
+          </div>
+          <div class="paperStats">
+            <div><span>模式</span><strong id="apiMode">-</strong></div>
+            <div><span>状态</span><strong id="apiStatus">-</strong></div>
+            <div><span>API Key</span><strong id="apiKeys">-</strong></div>
+            <div><span>程序持仓</span><strong id="apiOpen">0</strong></div>
+            <div><span>交易所持仓</span><strong id="apiExchangeOpen">0</strong></div>
+            <div><span>已平仓</span><strong id="apiClosed">0</strong></div>
+          </div>
+          <div class="paperTables">
+            <div class="paperPanel positionsPanel">
+              <div class="miniHead">交易所实际持仓</div>
+              <div class="tableWrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>symbol</th>
+                      <th>方向</th>
+                      <th>入场</th>
+                      <th>标记价</th>
+                      <th>数量</th>
+                      <th>名义金额</th>
+                      <th>浮盈亏</th>
+                      <th>杠杆</th>
+                    </tr>
+                  </thead>
+                  <tbody id="apiExchangePositions"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="paperPanel positionsPanel">
+              <div class="miniHead">程序管理持仓</div>
+              <div class="tableWrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>symbol</th>
+                      <th>方向</th>
+                      <th>入场</th>
+                      <th>数量</th>
+                      <th>止损</th>
+                      <th>止盈</th>
+                      <th>年龄</th>
+                    </tr>
+                  </thead>
+                  <tbody id="apiPositions"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="paperPanel tradesPanel">
+              <div class="miniHead">API平仓记录</div>
+              <div class="tableWrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>symbol</th>
+                      <th>方向</th>
+                      <th>入场</th>
+                      <th>出场</th>
+                      <th>原因</th>
+                      <th>盈亏</th>
+                    </tr>
+                  </thead>
+                  <tbody id="apiTrades"></tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -393,6 +433,6 @@
         </table>
       </section>
     </main>
-    <script src="/static/app.js?v=20260822-1"></script>
+    <script src="/static/app.js?v=20260822-2"></script>
   </body>
 </html>

@@ -4,6 +4,7 @@ import hmac
 import json
 import math
 import os
+import secrets
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -14,7 +15,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -26,6 +27,8 @@ BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 BINANCE_LIVE_TRADING_CONFIRM = os.getenv("BINANCE_LIVE_TRADING_CONFIRM", "")
 ADMIN_ACTION_KEY = os.getenv("ADMIN_ACTION_KEY", "")
+LIVE_TRADING_ACCESS_KEY = os.getenv("LIVE_TRADING_ACCESS_KEY", "") or ADMIN_ACTION_KEY
+LIVE_SESSION_SECRET = os.getenv("LIVE_SESSION_SECRET", "") or secrets.token_hex(32)
 DINGTALK_WEBHOOK = os.getenv(
     "DINGTALK_WEBHOOK",
     "",
@@ -111,6 +114,7 @@ class BinanceMonitor:
         self.paper_consecutive_losses = 0
         self.paper_pause_until = 0.0
         self.api_positions: dict[str, dict[str, Any]] = {}
+        self.api_exchange_positions: list[dict[str, Any]] = []
         self.api_trades: deque[dict[str, Any]] = deque(maxlen=200)
         self.api_cooldowns: dict[str, float] = {}
         self.api_roll_setups: dict[str, dict[str, Any]] = {}
@@ -159,7 +163,7 @@ class BinanceMonitor:
             if live_trading_confirm:
                 self.runtime_live_trading_confirm = live_trading_confirm
 
-    async def snapshot(self) -> dict[str, Any]:
+    async def snapshot(self, include_api_details: bool = False) -> dict[str, Any]:
         async with self._lock:
             return {
                 "config": self.config.model_dump(),
@@ -168,7 +172,7 @@ class BinanceMonitor:
                 "signals": list(self.signal_events),
                 "alerts": list(self.alert_events),
                 "paper": self._paper_snapshot(),
-                "api": self._api_snapshot(),
+                "api": self._api_snapshot(include_details=include_api_details),
             }
 
     async def _run_loop(self) -> None:
@@ -882,12 +886,16 @@ class BinanceMonitor:
 
     async def _update_api_trading(self, rows: list[dict[str, Any]]) -> None:
         config = self.config
+        ready_error = self._api_ready_error()
         if not config.api_trading_enabled:
+            if ready_error is None and not await self._sync_api_exchange_positions():
+                return
             self.api_status = self._api_status("未开启，不会下单", enabled=False)
             return
-        ready_error = self._api_ready_error()
         if ready_error:
             self.api_status = self._api_status(ready_error, ready=False)
+            return
+        if not await self._sync_api_exchange_positions():
             return
         row_map = {row["symbol"]: row for row in rows}
         for symbol, position in list(self.api_positions.items()):
@@ -1120,6 +1128,37 @@ class BinanceMonitor:
     async def _api_set_leverage(self, symbol: str) -> None:
         await self._api_signed_request("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": self.config.api_leverage})
 
+    async def _sync_api_exchange_positions(self) -> bool:
+        try:
+            positions = await self._api_signed_request("GET", "/fapi/v2/positionRisk", {})
+        except Exception as exc:
+            self.api_status = self._api_status(f"同步交易所持仓失败: {type(exc).__name__}: {exc}", ready=False)
+            return False
+        active_positions = []
+        for item in positions:
+            amount = float(item.get("positionAmt") or 0)
+            if amount == 0:
+                continue
+            entry_price = float(item.get("entryPrice") or 0)
+            mark_price = float(item.get("markPrice") or 0)
+            notional = float(item.get("notional") or 0)
+            unrealized_pnl = float(item.get("unRealizedProfit") or 0)
+            active_positions.append(
+                {
+                    "symbol": item.get("symbol"),
+                    "side": "long" if amount > 0 else "short",
+                    "amount": amount,
+                    "entryPrice": entry_price,
+                    "markPrice": mark_price,
+                    "notional": abs(notional),
+                    "unrealizedPnl": unrealized_pnl,
+                    "leverage": item.get("leverage"),
+                    "updatedAt": iso_now(),
+                }
+            )
+        self.api_exchange_positions = sorted(active_positions, key=lambda item: item["notional"], reverse=True)
+        return True
+
     async def _api_signed_request(self, method: str, path: str, params: dict[str, Any]) -> Any:
         base_url = BINANCE_TESTNET_FAPI if self.config.api_trading_testnet else BINANCE_FAPI
         api_key = self._api_key()
@@ -1168,17 +1207,20 @@ class BinanceMonitor:
             return None
         return format(final_qty.normalize(), "f")
 
-    def _api_snapshot(self) -> dict[str, Any]:
+    def _api_snapshot(self, include_details: bool = False) -> dict[str, Any]:
         return {
             **self.api_status,
             "hasKeys": bool(self._api_key() and self._api_secret()),
             "keySource": self._api_key_source(),
             "liveConfirmed": self._api_live_confirmed(),
             "adminKeyProtected": bool(ADMIN_ACTION_KEY),
+            "liveAccessProtected": bool(LIVE_TRADING_ACCESS_KEY),
+            "detailsUnlocked": include_details,
             "openCount": len(self.api_positions),
             "closedCount": len(self.api_trades),
-            "positions": list(self.api_positions.values()),
-            "trades": list(self.api_trades)[:100],
+            "exchangePositions": self.api_exchange_positions if include_details else [],
+            "positions": list(self.api_positions.values()) if include_details else [],
+            "trades": list(self.api_trades)[:100] if include_details else [],
         }
 
     async def _send_dingtalk_alert(self, event: dict[str, Any]) -> None:
@@ -1448,6 +1490,33 @@ def admin_key_valid(admin_key: str) -> bool:
     return hmac.compare_digest(admin_key, ADMIN_ACTION_KEY)
 
 
+def live_access_key_valid(access_key: str) -> bool:
+    if not LIVE_TRADING_ACCESS_KEY:
+        return True
+    return hmac.compare_digest(access_key, LIVE_TRADING_ACCESS_KEY)
+
+
+def make_live_access_token() -> str:
+    expires_at = int(time.time()) + 12 * 3600
+    body = str(expires_at)
+    signature = hmac.new(LIVE_SESSION_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+    return f"{body}.{signature}"
+
+
+def live_access_token_valid(token: str) -> bool:
+    if not LIVE_TRADING_ACCESS_KEY:
+        return True
+    try:
+        body, signature = token.split(".", 1)
+        expires_at = int(body)
+    except ValueError:
+        return False
+    if expires_at < int(time.time()):
+        return False
+    expected = hmac.new(LIVE_SESSION_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+
 def safe_num(value: float | None) -> float:
     if value is None or math.isnan(value):
         return 0.0
@@ -1507,8 +1576,9 @@ async def index() -> FileResponse:
 
 
 @app.get("/api/snapshot")
-async def api_snapshot() -> dict[str, Any]:
-    return await monitor.snapshot()
+async def api_snapshot(request: Request) -> dict[str, Any]:
+    token = request.query_params.get("live_token", "")
+    return await monitor.snapshot(include_api_details=live_access_token_valid(token))
 
 
 @app.get("/api/config")
@@ -1530,7 +1600,7 @@ async def api_set_config(payload: dict[str, Any]) -> dict[str, Any]:
     if credential_changed:
         await monitor.update_api_credentials(api_key, api_secret, live_trading_confirm)
     await monitor.update_config(config)
-    return await monitor.snapshot()
+    return await monitor.snapshot(include_api_details=True)
 
 
 @app.post("/api/paper/reset")
@@ -1539,11 +1609,20 @@ async def api_reset_paper() -> dict[str, Any]:
     return await monitor.snapshot()
 
 
+@app.post("/api/live/unlock")
+async def api_live_unlock(payload: dict[str, Any]) -> dict[str, Any]:
+    access_key = str(payload.get("access_key", ""))
+    if not live_access_key_valid(access_key):
+        raise HTTPException(status_code=403, detail="实盘入口口令错误")
+    return {"token": make_live_access_token(), "expiresInSeconds": 12 * 3600}
+
+
 @app.get("/events")
-async def events() -> StreamingResponse:
+async def events(request: Request) -> StreamingResponse:
     async def stream():
         while True:
-            payload = await monitor.snapshot()
+            token = request.query_params.get("live_token", "")
+            payload = await monitor.snapshot(include_api_details=live_access_token_valid(token))
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             await asyncio.sleep(3)
 

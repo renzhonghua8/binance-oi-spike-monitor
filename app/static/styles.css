@@ -140,6 +140,10 @@ p {
   border-top: 1px solid var(--line);
 }
 
+.hidden {
+  display: none !important;
+}
+
 .dangerText {
   grid-column: 2;
   color: var(--red);
@@ -152,9 +156,17 @@ p {
 
 .controls {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
   align-items: end;
+}
+
+.apiControls {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.wideField {
+  grid-column: span 2;
 }
 
 .toggle {
@@ -365,6 +377,38 @@ td b {
   margin: 0 0 18px;
 }
 
+.liveGate {
+  margin: 0 0 18px;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.unlockPanel {
+  display: grid;
+  grid-template-columns: 1fr minmax(220px, 320px) 120px auto;
+  gap: 12px;
+  align-items: end;
+  padding: 12px;
+  background: #10151d;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.unlockPanel h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.liveSettings {
+  margin-bottom: 12px;
+}
+
+.liveHead {
+  margin-top: 8px;
+}
+
 .paperStats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -464,13 +508,19 @@ td b {
   }
 
   .controls,
+  .apiControls,
   .settingsHead,
   .settingGroup,
   .summary,
+  .unlockPanel,
   .paperStats,
   .paperStrategy,
   .paperTables {
     grid-template-columns: 1fr;
+  }
+
+  .wideField {
+    grid-column: span 1;
   }
 
   .dangerText,

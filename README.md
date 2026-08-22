@@ -46,6 +46,7 @@ DINGTALK_WEBHOOK=https://oapi.dingtalk.com/robot/send?access_token=你的access_
 BINANCE_API_KEY=你的testnet或主网API Key
 BINANCE_API_SECRET=你的testnet或主网API Secret
 ADMIN_ACTION_KEY=用于修改API交易设置的操作密钥
+LIVE_TRADING_ACCESS_KEY=进入实盘交易页面的口令，可留空使用ADMIN_ACTION_KEY
 BINANCE_LIVE_TRADING_CONFIRM=
 ```
 
@@ -151,13 +152,26 @@ export BINANCE_LIVE_TRADING_CONFIRM="I_UNDERSTAND_REAL_MONEY"
 - Binance API Key / Secret：页面输入后保存即可用于交易，留空则保持原配置
 - 主网确认短语：只在关闭 Testnet 做主网真实交易时填写 `I_UNDERSTAND_REAL_MONEY`
 - 操作密钥：修改 API交易、Testnet、允许方向、单笔金额、最大持仓、杠杆、API密钥时必须输入。服务器未设置 `ADMIN_ACTION_KEY` 时不会启用这层保护。
+- 实盘入口口令：进入页面上的 `实盘交易` 区时输入。由 `.env` 的 `LIVE_TRADING_ACCESS_KEY` 控制；如果留空，则默认使用 `ADMIN_ACTION_KEY`。
+
+`ADMIN_ACTION_KEY` 是你自己设置的一段后台操作口令，不是 Binance 的 API Secret。它的作用是防止别人打开页面后随意开启实盘、修改杠杆、修改 API Key。比如 `.env` 里写：
+
+```bash
+ADMIN_ACTION_KEY=change_this_to_a_long_private_password
+LIVE_TRADING_ACCESS_KEY=another_private_password_for_live_panel
+```
 
 API 交易当前使用市价单开仓/平仓，止损、止盈、移动止损、反向信号、超时由程序监控后触发市价平仓。开仓和平仓都会推送到钉钉。
+
+实盘交易区解锁后会显示两类持仓：
+
+- 交易所实际持仓：从 Binance `positionRisk` 同步的非零仓位，用来核对账户真实状态。
+- 程序管理持仓：本程序自动开出的仓位，程序会按策略继续止盈、止损、移动止损、反向信号和超时平仓。
 
 重要限制：
 
 - API 持仓记录当前保存在程序内存中，重启程序后不会自动恢复交易所已有仓位。
-- 因此测试阶段建议只用 testnet，或主网极小资金，并在重启服务前先手动确认交易所没有未管理仓位。
+- 因此容器重启不会自动接管重启前交易所里已经存在的真实仓位；测试阶段建议只用 testnet，或主网极小资金，并在重启服务前先手动确认交易所没有未管理仓位。
 - API Key 禁止开启提现权限，建议绑定服务器 IP 白名单。
 
 ## 配置
