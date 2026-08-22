@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Binance U本位合约 OI 异动监控</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260822-13" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260823-1" />
   </head>
   <body>
     <main class="app">
@@ -449,6 +449,25 @@
                 </table>
               </div>
             </div>
+            <div class="paperPanel tradesPanel">
+              <div class="miniHead">最近未开仓原因</div>
+              <div class="tableWrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>symbol</th>
+                      <th>方向</th>
+                      <th>原因</th>
+                      <th>强度</th>
+                      <th>5m OI</th>
+                      <th>5m量倍数</th>
+                    </tr>
+                  </thead>
+                  <tbody id="apiSkips"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -607,6 +626,6 @@
         </table>
       </section>
     </main>
-    <script src="/static/app.js?v=20260822-13"></script>
+    <script src="/static/app.js?v=20260823-1"></script>
   </body>
 </html>

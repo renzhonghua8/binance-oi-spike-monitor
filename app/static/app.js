@@ -429,6 +429,21 @@ function renderApi() {
       </tr>
     `)
     .join("");
+
+  document.querySelector("#apiSkips").innerHTML = (api.skips || [])
+    .slice(0, 30)
+    .map((item) => `
+      <tr>
+        <td>${item.createdAt || "-"}</td>
+        <td class="symbol">${item.symbol || "-"}</td>
+        <td>${item.signalDirection || "-"}</td>
+        <td>${item.reason || "-"}</td>
+        <td>${item.signalStrength ?? "-"}</td>
+        <td>${pct(item.oiChange5m, "-")}</td>
+        <td>${multiple(item.volumeMultiple5m, "-")}</td>
+      </tr>
+    `)
+    .join("");
 }
 
 function renderAdminHint() {

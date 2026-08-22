@@ -161,6 +161,7 @@ class BinanceMonitor:
         self.api_account: dict[str, Any] = {}
         self.api_exchange_positions: list[dict[str, Any]] = []
         self.api_trades: deque[dict[str, Any]] = deque(maxlen=200)
+        self.api_skip_events: deque[dict[str, Any]] = deque(maxlen=100)
         self.api_cooldowns: dict[str, float] = {}
         self.api_roll_setups: dict[str, dict[str, Any]] = {}
         self.api_consecutive_losses = 0
@@ -1015,18 +1016,39 @@ class BinanceMonitor:
         )
 
     def _api_row_is_tradeable(self, row: dict[str, Any]) -> bool:
+        return not self._api_trade_block_reasons(row)
+
+    def _api_trade_block_reasons(self, row: dict[str, Any]) -> list[str]:
         config = self.config
+        reasons = []
         if int(row.get("dataAgeSeconds") or 999999) > config.api_max_data_age_seconds:
-            return False
+            reasons.append(f"数据过期>{config.api_max_data_age_seconds}s")
         if self._api_signal_direction(row) == "观察":
-            return False
+            reasons.append("实盘方向=观察")
         if safe_num(row.get("oiChange5m")) < config.api_oi_5m_threshold:
-            return False
+            reasons.append(f"OI低于{config.api_oi_5m_threshold}%")
         if safe_num(row.get("volumeMultiple5m")) < config.api_volume_multiple_threshold:
-            return False
+            reasons.append(f"量倍数低于{config.api_volume_multiple_threshold}x")
         if safe_num(row.get("quoteVolume24h")) < config.api_min_24h_quote_volume:
-            return False
-        return int(row.get("signalStrength") or 0) >= config.api_signal_strength_threshold
+            reasons.append("24h成交额低于实盘要求")
+        if int(row.get("signalStrength") or 0) < config.api_signal_strength_threshold:
+            reasons.append(f"强度低于{config.api_signal_strength_threshold}")
+        return reasons
+
+    def _record_api_skip(self, row: dict[str, Any], reason: str, signal_direction: str | None = None) -> None:
+        self.api_skip_events.appendleft(
+            {
+                "createdAt": iso_now(),
+                "symbol": row.get("symbol"),
+                "signalDirection": signal_direction or self._api_signal_direction(row),
+                "reason": reason,
+                "signalStrength": row.get("signalStrength"),
+                "oiChange5m": row.get("oiChange5m"),
+                "priceChange5m": row.get("priceChange5m"),
+                "volumeMultiple5m": row.get("volumeMultiple5m"),
+                "quoteVolume24h": row.get("quoteVolume24h"),
+            }
+        )
 
     async def _maybe_open_api_position(self, row: dict[str, Any]) -> None:
         config = self.config
@@ -1036,25 +1058,35 @@ class BinanceMonitor:
         if side is None:
             return
         if side == "long" and not config.api_trading_long_enabled:
+            self._record_api_skip(row, "实盘未允许做多", signal_direction)
             return
         if side == "short" and not config.api_trading_short_enabled:
+            self._record_api_skip(row, "实盘未允许做空", signal_direction)
             return
         if symbol in self.api_positions:
+            self._record_api_skip(row, "程序已有同币种持仓", signal_direction)
             return
         if self._api_opening_paused():
+            self._record_api_skip(row, self._api_pause_reason(), signal_direction)
             return
         if time.time() < self.api_cooldowns.get(symbol, 0):
+            self._record_api_skip(row, "同币种冷却中", signal_direction)
             return
         if len(self.api_positions) >= config.api_max_open_positions:
+            self._record_api_skip(row, "达到实盘最大同时持仓", signal_direction)
             return
-        if not self._api_row_is_tradeable(row):
+        block_reasons = self._api_trade_block_reasons(row)
+        if block_reasons:
+            self._record_api_skip(row, "；".join(block_reasons), signal_direction)
             return
         latest_price = float(row["latestPrice"])
         if latest_price <= 0:
+            self._record_api_skip(row, "价格无效", signal_direction)
             return
         had_roll_setup = symbol in self.api_roll_setups
         roll_setup = self._api_roll_setup_for(row, side, latest_price)
         if had_roll_setup and not roll_setup and symbol in self.api_roll_setups:
+            self._record_api_skip(row, "等待滚仓二次确认", signal_direction)
             return
         risk_factor = roll_setup["riskFactor"] if roll_setup else 1.0
         stop_loss_pct_value = config.api_roll_stop_loss_pct if roll_setup else config.api_stop_loss_pct
@@ -1062,6 +1094,7 @@ class BinanceMonitor:
         equity = self._api_account_equity()
         if equity <= 0:
             self.api_status = self._api_status(f"{symbol} 无法读取账户权益，暂不开仓", ready=True)
+            self._record_api_skip(row, "无法读取账户权益", signal_direction)
             return
         base_notional = equity * (config.api_equity_risk_pct / 100)
         notional = base_notional * risk_factor
@@ -1070,6 +1103,7 @@ class BinanceMonitor:
         qty_text = self._api_quantity(symbol, notional / latest_price)
         if qty_text is None:
             self.api_status = self._api_status(f"{symbol} 数量低于交易所最小值", ready=True)
+            self._record_api_skip(row, "数量低于交易所最小值", signal_direction)
             return
         order_side = "BUY" if side == "long" else "SELL"
         try:
@@ -1086,7 +1120,9 @@ class BinanceMonitor:
                 },
             )
         except Exception as exc:
-            self.api_status = self._api_status(f"{symbol} 开仓失败: {format_api_exception(exc)}", ready=True)
+            message = format_api_exception(exc)
+            self.api_status = self._api_status(f"{symbol} 开仓失败: {message}", ready=True)
+            self._record_api_skip(row, f"交易所开仓失败: {message}", signal_direction)
             return
         entry_price = api_order_price(order, latest_price)
         qty = float(qty_text)
@@ -1442,6 +1478,7 @@ class BinanceMonitor:
             "exchangePositions": self.api_exchange_positions if include_details else [],
             "positions": list(self.api_positions.values()) if include_details else [],
             "trades": list(self.api_trades)[:100] if include_details else [],
+            "skips": list(self.api_skip_events)[:50] if include_details else [],
         }
 
     async def _send_dingtalk_alert(self, event: dict[str, Any]) -> None:
