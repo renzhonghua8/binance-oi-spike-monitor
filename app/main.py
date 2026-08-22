@@ -18,7 +18,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 
 BINANCE_FAPI = "https://fapi.binance.com"
@@ -98,7 +98,7 @@ class MonitorConfig(BaseModel):
     api_trading_testnet: bool = env_bool("API_TRADING_TESTNET", True)
     api_trading_long_enabled: bool = env_bool("API_TRADING_LONG_ENABLED", True)
     api_trading_short_enabled: bool = env_bool("API_TRADING_SHORT_ENABLED", False)
-    api_equity_risk_pct: float = Field(default=env_float("API_EQUITY_RISK_PCT", 1.0), ge=0.1, le=20)
+    api_equity_risk_pct: float = Field(default=env_float("API_EQUITY_RISK_PCT", 1.0), ge=0.1, le=100)
     api_max_notional_per_trade: float = Field(default=env_float("API_MAX_NOTIONAL_PER_TRADE", 0.0), ge=0, le=10_000)
     api_max_open_positions: int = Field(default=env_int("API_MAX_OPEN_POSITIONS", 1), ge=1, le=10)
     api_leverage: int = Field(default=env_int("API_LEVERAGE", 1), ge=1, le=20)
@@ -1717,7 +1717,14 @@ async def api_set_config(payload: dict[str, Any]) -> dict[str, Any]:
     api_key = str(payload.pop("binance_api_key", "")).strip()
     api_secret = str(payload.pop("binance_api_secret", "")).strip()
     live_trading_confirm = str(payload.pop("binance_live_trading_confirm", "")).strip()
-    config = MonitorConfig(**payload)
+    try:
+        config = MonitorConfig(**payload)
+    except ValidationError as exc:
+        messages = []
+        for error in exc.errors():
+            field = ".".join(str(part) for part in error.get("loc", []))
+            messages.append(f"{field}: {error.get('msg', '参数不合法')}")
+        raise HTTPException(status_code=422, detail="；".join(messages) or "配置参数不合法") from exc
     credential_changed = bool(api_key or api_secret or live_trading_confirm)
     if (api_config_changed(monitor.config, config) or credential_changed) and not admin_key_valid(admin_key):
         raise HTTPException(status_code=403, detail="修改 API 真实交易配置需要输入正确操作密钥")
