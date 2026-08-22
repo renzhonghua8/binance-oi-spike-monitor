@@ -114,6 +114,9 @@ class BinanceMonitor:
         self.api_trades: deque[dict[str, Any]] = deque(maxlen=200)
         self.api_cooldowns: dict[str, float] = {}
         self.api_roll_setups: dict[str, dict[str, Any]] = {}
+        self.runtime_api_key = ""
+        self.runtime_api_secret = ""
+        self.runtime_live_trading_confirm = ""
         self.api_status: dict[str, Any] = {
             "enabled": False,
             "ready": False,
@@ -141,6 +144,20 @@ class BinanceMonitor:
         async with self._lock:
             self.config = config
         await self.poll_once()
+
+    async def update_api_credentials(
+        self,
+        api_key: str = "",
+        api_secret: str = "",
+        live_trading_confirm: str = "",
+    ) -> None:
+        async with self._lock:
+            if api_key:
+                self.runtime_api_key = api_key
+            if api_secret:
+                self.runtime_api_secret = api_secret
+            if live_trading_confirm:
+                self.runtime_live_trading_confirm = live_trading_confirm
 
     async def snapshot(self) -> dict[str, Any]:
         async with self._lock:
@@ -883,10 +900,10 @@ class BinanceMonitor:
         self.api_status = self._api_status("运行中", ready=True)
 
     def _api_ready_error(self) -> str | None:
-        if not BINANCE_API_KEY or not BINANCE_API_SECRET:
-            return "缺少 BINANCE_API_KEY / BINANCE_API_SECRET"
-        if not self.config.api_trading_testnet and BINANCE_LIVE_TRADING_CONFIRM != "I_UNDERSTAND_REAL_MONEY":
-            return "主网交易未确认"
+        if not self._api_key() or not self._api_secret():
+            return "缺少 Binance API Key / Secret，请在页面或 .env 配置"
+        if not self.config.api_trading_testnet and not self._api_live_confirmed():
+            return "主网交易未确认，请输入确认短语"
         return None
 
     def _api_status(self, message: str, enabled: bool | None = None, ready: bool = False) -> dict[str, Any]:
@@ -1105,10 +1122,12 @@ class BinanceMonitor:
 
     async def _api_signed_request(self, method: str, path: str, params: dict[str, Any]) -> Any:
         base_url = BINANCE_TESTNET_FAPI if self.config.api_trading_testnet else BINANCE_FAPI
+        api_key = self._api_key()
+        api_secret = self._api_secret()
         signed_params = {**params, "timestamp": int(time.time() * 1000), "recvWindow": 5000}
         query = urlencode(signed_params)
-        signature = hmac.new(BINANCE_API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
-        headers = {"X-MBX-APIKEY": BINANCE_API_KEY, "Content-Type": "application/x-www-form-urlencoded"}
+        signature = hmac.new(api_secret.encode(), query.encode(), hashlib.sha256).hexdigest()
+        headers = {"X-MBX-APIKEY": api_key, "Content-Type": "application/x-www-form-urlencoded"}
         timeout = httpx.Timeout(12.0, connect=5.0)
         async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
             if method == "POST":
@@ -1117,6 +1136,24 @@ class BinanceMonitor:
                 response = await client.get(f"{base_url}{path}?{query}&signature={signature}")
             response.raise_for_status()
             return response.json()
+
+    def _api_key(self) -> str:
+        return self.runtime_api_key or BINANCE_API_KEY
+
+    def _api_secret(self) -> str:
+        return self.runtime_api_secret or BINANCE_API_SECRET
+
+    def _api_key_source(self) -> str:
+        if self.runtime_api_key and self.runtime_api_secret:
+            return "页面"
+        if BINANCE_API_KEY and BINANCE_API_SECRET:
+            return ".env"
+        if self._api_key() and self._api_secret():
+            return "混合"
+        return "未配置"
+
+    def _api_live_confirmed(self) -> bool:
+        return (self.runtime_live_trading_confirm or BINANCE_LIVE_TRADING_CONFIRM) == "I_UNDERSTAND_REAL_MONEY"
 
     def _api_quantity(self, symbol: str, qty: float) -> str | None:
         spec = self.symbol_specs.get(symbol, {})
@@ -1134,8 +1171,9 @@ class BinanceMonitor:
     def _api_snapshot(self) -> dict[str, Any]:
         return {
             **self.api_status,
-            "hasKeys": bool(BINANCE_API_KEY and BINANCE_API_SECRET),
-            "liveConfirmed": BINANCE_LIVE_TRADING_CONFIRM == "I_UNDERSTAND_REAL_MONEY",
+            "hasKeys": bool(self._api_key() and self._api_secret()),
+            "keySource": self._api_key_source(),
+            "liveConfirmed": self._api_live_confirmed(),
             "adminKeyProtected": bool(ADMIN_ACTION_KEY),
             "openCount": len(self.api_positions),
             "closedCount": len(self.api_trades),
@@ -1482,9 +1520,15 @@ async def api_get_config() -> dict[str, Any]:
 @app.post("/api/config")
 async def api_set_config(payload: dict[str, Any]) -> dict[str, Any]:
     admin_key = str(payload.pop("admin_key", ""))
+    api_key = str(payload.pop("binance_api_key", "")).strip()
+    api_secret = str(payload.pop("binance_api_secret", "")).strip()
+    live_trading_confirm = str(payload.pop("binance_live_trading_confirm", "")).strip()
     config = MonitorConfig(**payload)
-    if api_config_changed(monitor.config, config) and not admin_key_valid(admin_key):
+    credential_changed = bool(api_key or api_secret or live_trading_confirm)
+    if (api_config_changed(monitor.config, config) or credential_changed) and not admin_key_valid(admin_key):
         raise HTTPException(status_code=403, detail="修改 API 真实交易配置需要输入正确操作密钥")
+    if credential_changed:
+        await monitor.update_api_credentials(api_key, api_secret, live_trading_confirm)
     await monitor.update_config(config)
     return await monitor.snapshot()
 

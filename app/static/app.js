@@ -33,6 +33,9 @@ const fields = {
   apiMaxNotional: document.querySelector("#apiMaxNotional"),
   apiMaxOpen: document.querySelector("#apiMaxOpen"),
   apiLeverage: document.querySelector("#apiLeverage"),
+  apiKeyInput: document.querySelector("#apiKeyInput"),
+  apiSecretInput: document.querySelector("#apiSecretInput"),
+  apiLiveConfirm: document.querySelector("#apiLiveConfirm"),
   adminKey: document.querySelector("#adminKey"),
 };
 
@@ -256,7 +259,7 @@ function renderApi() {
   document.querySelector("#apiMode").textContent = api.mode === "testnet" ? "Testnet" : "主网";
   document.querySelector("#apiStatus").textContent = `${api.enabled ? api.message : "未开启"}`;
   document.querySelector("#apiStatus").className = api.ready ? "up" : api.enabled ? "down" : "";
-  document.querySelector("#apiKeys").textContent = api.hasKeys ? "已配置" : "未配置";
+  document.querySelector("#apiKeys").textContent = api.hasKeys ? `已配置（${api.keySource || "未知"}）` : "未配置";
   document.querySelector("#apiKeys").className = api.hasKeys ? "up" : "down";
   document.querySelector("#apiOpen").textContent = api.openCount || 0;
   document.querySelector("#apiClosed").textContent = api.closedCount || 0;
@@ -295,7 +298,7 @@ function renderAdminHint() {
   const hint = document.querySelector("#adminKeyHint");
   if (!hint || !state.api) return;
   hint.textContent = state.api.adminKeyProtected
-    ? "API真实交易参数受操作密钥保护；修改 API交易、Testnet、方向、金额、持仓、杠杆时必须输入操作密钥。"
+    ? "API真实交易参数受操作密钥保护；修改 API交易、Testnet、方向、金额、持仓、杠杆、密钥时必须输入操作密钥。"
     : "服务器未设置 ADMIN_ACTION_KEY，API真实交易参数暂未启用操作密钥保护。";
   hint.className = state.api.adminKeyProtected ? "dangerText" : "warningText";
 }
@@ -426,6 +429,9 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
     api_max_notional_per_trade: Number(fields.apiMaxNotional.value),
     api_max_open_positions: Number(fields.apiMaxOpen.value),
     api_leverage: Number(fields.apiLeverage.value),
+    binance_api_key: fields.apiKeyInput.value.trim(),
+    binance_api_secret: fields.apiSecretInput.value.trim(),
+    binance_live_trading_confirm: fields.apiLiveConfirm.value.trim(),
     admin_key: fields.adminKey.value,
   };
   state.saving = true;
@@ -452,6 +458,9 @@ document.querySelector("#saveConfig").addEventListener("click", async () => {
   if (snapshot.config) {
     syncConfigFields(snapshot.config);
   }
+  fields.apiKeyInput.value = "";
+  fields.apiSecretInput.value = "";
+  fields.apiLiveConfirm.value = "";
   fields.adminKey.value = "";
   saveButton.textContent = "已保存";
   setSaveStatus("保存成功，配置已生效", "successTextInline");

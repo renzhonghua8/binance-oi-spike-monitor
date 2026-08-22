@@ -119,6 +119,11 @@ http://127.0.0.1:8000
 
 程序支持 Binance USD-M Futures API 交易，默认关闭，页面顶部打开 `API交易` 后才会下单。默认使用 Futures Testnet。
 
+API Key / Secret 有两种配置方式：
+
+- 页面输入：在 `API真实交易` 区填写 Binance API Key、API Secret、操作密钥后点击保存，立即生效；保存成功后页面会清空密钥输入框，不会回显 Secret。该方式保存在程序内存中，重启容器后会丢失。
+- `.env` 文件：适合长期部署，容器重启后仍然有效。
+
 环境变量：
 
 ```bash
@@ -143,7 +148,9 @@ export BINANCE_LIVE_TRADING_CONFIRM="I_UNDERSTAND_REAL_MONEY"
 - API单笔名义 USDT：默认 20 USDT
 - API最大持仓：默认最多 1 个真实持仓
 - API杠杆：默认 1x
-- 操作密钥：修改 API交易、Testnet、允许方向、单笔金额、最大持仓、杠杆时必须输入。服务器未设置 `ADMIN_ACTION_KEY` 时不会启用这层保护。
+- Binance API Key / Secret：页面输入后保存即可用于交易，留空则保持原配置
+- 主网确认短语：只在关闭 Testnet 做主网真实交易时填写 `I_UNDERSTAND_REAL_MONEY`
+- 操作密钥：修改 API交易、Testnet、允许方向、单笔金额、最大持仓、杠杆、API密钥时必须输入。服务器未设置 `ADMIN_ACTION_KEY` 时不会启用这层保护。
 
 API 交易当前使用市价单开仓/平仓，止损、止盈、移动止损、反向信号、超时由程序监控后触发市价平仓。开仓和平仓都会推送到钉钉。
 
