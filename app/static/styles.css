@@ -141,6 +141,10 @@ p {
   color: var(--amber) !important;
 }
 
+.warn {
+  color: var(--amber) !important;
+}
+
 .dangerTextInline {
   color: var(--red) !important;
 }

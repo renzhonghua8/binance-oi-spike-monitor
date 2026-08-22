@@ -164,6 +164,8 @@ class BinanceMonitor:
         self.api_account_synced_at = 0.0
         self.api_trades: deque[dict[str, Any]] = deque(maxlen=200)
         self.api_skip_events: deque[dict[str, Any]] = deque(maxlen=100)
+        self.api_order_logs: deque[dict[str, Any]] = deque(maxlen=200)
+        self.api_failure_alert_times: dict[str, float] = {}
         self.api_cooldowns: dict[str, float] = {}
         self.api_roll_setups: dict[str, dict[str, Any]] = {}
         self.api_consecutive_losses = 0
@@ -1037,20 +1039,61 @@ class BinanceMonitor:
             reasons.append(f"强度低于{config.api_signal_strength_threshold}")
         return reasons
 
-    def _record_api_skip(self, row: dict[str, Any], reason: str, signal_direction: str | None = None) -> None:
-        self.api_skip_events.appendleft(
-            {
-                "createdAt": iso_now(),
-                "symbol": row.get("symbol"),
-                "signalDirection": signal_direction or self._api_signal_direction(row),
-                "reason": reason,
-                "signalStrength": row.get("signalStrength"),
-                "oiChange5m": row.get("oiChange5m"),
-                "priceChange5m": row.get("priceChange5m"),
-                "volumeMultiple5m": row.get("volumeMultiple5m"),
-                "quoteVolume24h": row.get("quoteVolume24h"),
-            }
-        )
+    def _record_api_skip(
+        self,
+        row: dict[str, Any],
+        reason: str,
+        signal_direction: str | None = None,
+        *,
+        level: str = "info",
+        event: str = "未开仓",
+        notify: bool = False,
+    ) -> None:
+        record = {
+            "createdAt": iso_now(),
+            "symbol": row.get("symbol"),
+            "signalDirection": signal_direction or self._api_signal_direction(row),
+            "reason": reason,
+            "event": event,
+            "level": level,
+            "signalStrength": row.get("signalStrength"),
+            "oiChange5m": row.get("oiChange5m"),
+            "priceChange5m": row.get("priceChange5m"),
+            "volumeMultiple5m": row.get("volumeMultiple5m"),
+            "quoteVolume24h": row.get("quoteVolume24h"),
+        }
+        self.api_skip_events.appendleft(record)
+        self.api_order_logs.appendleft(record)
+        if notify:
+            self._schedule_api_failure_alert(record)
+
+    def _record_api_system_log(self, event: str, reason: str, *, symbol: str = "-", level: str = "warning", notify: bool = False) -> None:
+        record = {
+            "createdAt": iso_now(),
+            "symbol": symbol,
+            "signalDirection": "-",
+            "reason": reason,
+            "event": event,
+            "level": level,
+            "signalStrength": None,
+            "oiChange5m": None,
+            "priceChange5m": None,
+            "volumeMultiple5m": None,
+            "quoteVolume24h": None,
+        }
+        self.api_order_logs.appendleft(record)
+        if notify:
+            self._schedule_api_failure_alert(record)
+
+    def _schedule_api_failure_alert(self, record: dict[str, Any]) -> None:
+        if not DINGTALK_WEBHOOK:
+            return
+        key = f"{record.get('symbol')}|{record.get('event')}|{record.get('reason')}"
+        now = time.time()
+        if now - self.api_failure_alert_times.get(key, 0) < 300:
+            return
+        self.api_failure_alert_times[key] = now
+        schedule_background_task(self._send_dingtalk_api_failure_alert(record))
 
     def _api_exchange_position_symbols(self) -> set[str]:
         return {
@@ -1136,7 +1179,7 @@ class BinanceMonitor:
         except Exception as exc:
             message = format_api_exception(exc)
             self.api_status = self._api_status(f"{symbol} 开仓失败: {message}", ready=True)
-            self._record_api_skip(row, f"交易所开仓失败: {message}", signal_direction)
+            self._record_api_skip(row, f"交易所开仓失败: {message}", signal_direction, level="error", event="实盘开仓失败", notify=True)
             return
         entry_price = api_order_price(order, latest_price)
         qty = float(qty_text)
@@ -1257,7 +1300,9 @@ class BinanceMonitor:
                 },
             )
         except Exception as exc:
-            self.api_status = self._api_status(f"{symbol} 平仓失败: {format_api_exception(exc)}", ready=True)
+            message = format_api_exception(exc)
+            self.api_status = self._api_status(f"{symbol} 平仓失败: {message}", ready=True)
+            self._record_api_system_log("实盘平仓失败", message, symbol=symbol, level="error", notify=True)
             return
         exit_price = api_order_price(order, latest_price)
         side_mult = 1 if position["side"] == "long" else -1
@@ -1341,7 +1386,9 @@ class BinanceMonitor:
                 self._api_signed_request("GET", "/fapi/v2/positionRisk", {}),
             )
         except Exception as exc:
-            self.api_status = self._api_status(f"同步交易所账户失败: {format_api_exception(exc)}", ready=False)
+            message = format_api_exception(exc)
+            self.api_status = self._api_status(f"同步交易所账户失败: {message}", ready=False)
+            self._record_api_system_log("实盘账户同步失败", message, level="warning", notify=False)
             return False
         self.api_account = {
             "totalWalletBalance": float(account.get("totalWalletBalance") or 0),
@@ -1507,6 +1554,7 @@ class BinanceMonitor:
             "positions": list(self.api_positions.values()) if include_details else [],
             "trades": list(self.api_trades)[:100] if include_details else [],
             "skips": list(self.api_skip_events)[:50] if include_details else [],
+            "logs": list(self.api_order_logs)[:80] if include_details else [],
         }
 
     async def _send_dingtalk_alert(self, event: dict[str, Any]) -> None:
@@ -1520,6 +1568,12 @@ class BinanceMonitor:
             return
         payload = build_dingtalk_trade_payload(action, trade)
         await self._post_dingtalk_payload(payload, trade["symbol"])
+
+    async def _send_dingtalk_api_failure_alert(self, record: dict[str, Any]) -> None:
+        if not DINGTALK_WEBHOOK:
+            return
+        payload = build_dingtalk_api_failure_payload(record)
+        await self._post_dingtalk_payload(payload, record.get("symbol") or "-")
 
     async def _post_dingtalk_payload(self, payload: dict[str, Any], symbol: str) -> None:
         alert_record = {
@@ -1703,6 +1757,31 @@ def build_dingtalk_trade_payload(action: str, trade: dict[str, Any]) -> dict[str
                 f"- 出场时间：{trade['exitTime']}",
             ]
         )
+    return {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": title,
+            "text": "\n".join(lines),
+        },
+    }
+
+
+def build_dingtalk_api_failure_payload(record: dict[str, Any]) -> dict[str, Any]:
+    symbol = record.get("symbol") or "-"
+    event = record.get("event") or "实盘交易失败"
+    title = f"{DINGTALK_KEYWORD} {event} {symbol}"
+    lines = [
+        f"## {title}",
+        f"- 级别：{record.get('level', '-')}",
+        f"- 方向：{record.get('signalDirection', '-')}",
+        f"- 原因：{record.get('reason', '-')}",
+        f"- 强度：{record.get('signalStrength', '-')}",
+        f"- 5m OI：{format_pct(record.get('oiChange5m'))}",
+        f"- 5m价格：{format_pct(record.get('priceChange5m'))}",
+        f"- 5m量倍数：{format_multiple(record.get('volumeMultiple5m'))}",
+        f"- 24h成交额：{format_money(record.get('quoteVolume24h'))}",
+        f"- 时间：{record.get('createdAt', '-')}",
+    ]
     return {
         "msgtype": "markdown",
         "markdown": {

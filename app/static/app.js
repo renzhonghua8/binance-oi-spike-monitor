@@ -455,6 +455,23 @@ function renderApi() {
       </tr>
     `)
     .join("");
+
+  document.querySelector("#apiLogs").innerHTML = (api.logs || [])
+    .slice(0, 50)
+    .map((item) => {
+      const levelClass = item.level === "error" ? "down" : item.level === "warning" ? "warn" : "";
+      return `
+        <tr>
+          <td>${item.createdAt || "-"}</td>
+          <td class="${levelClass}">${item.level || "-"}</td>
+          <td>${item.event || "-"}</td>
+          <td class="symbol">${item.symbol || "-"}</td>
+          <td>${item.signalDirection || "-"}</td>
+          <td>${item.reason || "-"}</td>
+        </tr>
+      `;
+    })
+    .join("");
 }
 
 function renderAdminHint() {
