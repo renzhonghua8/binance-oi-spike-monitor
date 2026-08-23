@@ -1025,8 +1025,9 @@ class BinanceMonitor:
     def _api_trade_block_reasons(self, row: dict[str, Any]) -> list[str]:
         config = self.config
         reasons = []
-        if int(row.get("dataAgeSeconds") or 999999) > config.api_max_data_age_seconds:
-            reasons.append(f"数据过期>{config.api_max_data_age_seconds}s")
+        data_age_seconds = int(row.get("dataAgeSeconds") or 999999)
+        if data_age_seconds > config.api_max_data_age_seconds:
+            reasons.append(f"数据过期 {data_age_seconds}s > {config.api_max_data_age_seconds}s")
         if self._api_signal_direction(row) == "观察":
             reasons.append("实盘方向=观察")
         if safe_num(row.get("oiChange5m")) < config.api_oi_5m_threshold:
@@ -1061,6 +1062,7 @@ class BinanceMonitor:
             "priceChange5m": row.get("priceChange5m"),
             "volumeMultiple5m": row.get("volumeMultiple5m"),
             "quoteVolume24h": row.get("quoteVolume24h"),
+            "dataAgeSeconds": row.get("dataAgeSeconds"),
         }
         self.api_skip_events.appendleft(record)
         self.api_order_logs.appendleft(record)

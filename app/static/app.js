@@ -461,6 +461,7 @@ function renderApi() {
         <td class="symbol">${item.symbol || "-"}</td>
         <td>${item.signalDirection || "-"}</td>
         <td>${item.reason || "-"}</td>
+        <td>${age(item.dataAgeSeconds)}</td>
         <td>${item.signalStrength ?? "-"}</td>
         <td>${pct(item.oiChange5m, "-")}</td>
         <td>${multiple(item.volumeMultiple5m, "-")}</td>
@@ -480,6 +481,7 @@ function renderApi() {
           <td class="symbol">${item.symbol || "-"}</td>
           <td>${item.signalDirection || "-"}</td>
           <td>${item.reason || "-"}</td>
+          <td>${age(item.dataAgeSeconds)}</td>
         </tr>
       `;
     })
