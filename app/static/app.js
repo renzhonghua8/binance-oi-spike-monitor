@@ -382,7 +382,9 @@ function renderApi() {
   document.querySelector("#apiSignalOi").textContent = settings.oi5mThreshold === undefined ? "-" : `${settings.oi5mThreshold}%`;
   document.querySelector("#apiSignalVolume").textContent = settings.volumeMultipleThreshold === undefined ? "-" : `${settings.volumeMultipleThreshold}x`;
   document.querySelector("#apiSignalStrength").textContent = settings.signalStrengthThreshold === undefined ? "-" : settings.signalStrengthThreshold;
-  document.querySelector("#apiSignalAge").textContent = settings.maxDataAgeSeconds === undefined ? "-" : `${settings.maxDataAgeSeconds}s`;
+  document.querySelector("#apiSignalAge").textContent = settings.maxDataAgeSeconds === undefined
+    ? "-"
+    : (settings.maxDataAgeSeconds > 0 ? `${settings.maxDataAgeSeconds}s` : "不检查");
   document.querySelector("#apiSignalMinVolume").textContent = settings.min24hQuoteVolume === undefined ? "-" : `${money(settings.min24hQuoteVolume)} USDT`;
   document.querySelector("#apiRiskStopLoss").textContent = settings.stopLossPct === undefined ? "-" : `${settings.stopLossPct}%`;
   document.querySelector("#apiRiskTakeProfit").textContent = settings.takeProfitPct === undefined ? "-" : `${settings.takeProfitPct}%`;

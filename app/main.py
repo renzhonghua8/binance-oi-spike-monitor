@@ -101,7 +101,7 @@ class MonitorConfig(BaseModel):
     api_oi_5m_threshold: float = Field(default=env_float("API_OI_5M_THRESHOLD", 3.0), ge=0)
     api_volume_multiple_threshold: float = Field(default=env_float("API_VOLUME_MULTIPLE_THRESHOLD", 1.5), ge=0)
     api_signal_strength_threshold: int = Field(default=env_int("API_SIGNAL_STRENGTH_THRESHOLD", 50), ge=0, le=100)
-    api_max_data_age_seconds: int = Field(default=env_int("API_MAX_DATA_AGE_SECONDS", 90), ge=30, le=300)
+    api_max_data_age_seconds: int = Field(default=env_int("API_MAX_DATA_AGE_SECONDS", 90), ge=0, le=3600)
     api_min_24h_quote_volume: float = Field(default=env_float("API_MIN_24H_QUOTE_VOLUME", 0.0), ge=0)
     api_equity_risk_pct: float = Field(default=env_float("API_EQUITY_RISK_PCT", 1.0), ge=0.1, le=100)
     api_max_notional_per_trade: float = Field(default=env_float("API_MAX_NOTIONAL_PER_TRADE", 0.0), ge=0, le=10_000)
@@ -1026,7 +1026,7 @@ class BinanceMonitor:
         config = self.config
         reasons = []
         data_age_seconds = int(row.get("dataAgeSeconds") or 999999)
-        if data_age_seconds > config.api_max_data_age_seconds:
+        if config.api_max_data_age_seconds > 0 and data_age_seconds > config.api_max_data_age_seconds:
             reasons.append(f"数据过期 {data_age_seconds}s > {config.api_max_data_age_seconds}s")
         if self._api_signal_direction(row) == "观察":
             reasons.append("实盘方向=观察")
